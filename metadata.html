@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Batch WAV Tool — Speed/Pitch &amp; Tags</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #eef3fb;
+    --panel: #ffffff;
+    --panel-2: #f2f6fc;
+    --line: #dbe4f3;
+    --text: #16233d;
+    --text-dim: #64738f;
+    --navy: #0b2554;
+    --navy-deep: #071733;
+    --blue: #3d8bff;
+    --blue-light: #6fc2ff;
+    --red: #d64550;
+    --mono: 'JetBrains Mono', Consolas, monospace;
+    --display: 'Sora', 'Segoe UI', sans-serif;
+    --ui: 'Inter', -apple-system, 'Segoe UI', sans-serif;
+    --radius: 14px;
+  }
+  * { box-sizing: border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--ui); padding-bottom:120px;
+  }
+  header{
+    padding:34px 24px 30px;
+    background: linear-gradient(135deg, var(--navy-deep), var(--navy) 55%, #123a7a);
+    color:#fff; position:relative; overflow:hidden;
+  }
+  header::after{
+    content:''; position:absolute; right:-60px; top:-60px; width:220px; height:220px; border-radius:50%;
+    background: radial-gradient(circle, rgba(111,194,255,.35), transparent 70%);
+  }
+  header .inner{ position:relative; max-width:1160px; margin:0 auto; }
+  h1{
+    font-family:var(--display); font-weight:800; font-size:26px; margin:0 0 6px;
+    letter-spacing:-0.01em;
+  }
+  .tag{ font-family:var(--ui); font-size:13px; color:#cfe0ff; }
+  main{ max-width:1160px; margin:0 auto; padding:26px 16px; display:flex; flex-direction:column; gap:22px; }
+  section{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:20px 22px 22px; box-shadow: 0 1px 2px rgba(11,37,84,.04), 0 8px 24px -18px rgba(11,37,84,.25);
+  }
+  section > h2{
+    font-family:var(--display); font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--navy);
+    margin:0 0 16px; font-weight:700; padding-bottom:10px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:10px;
+  }
+  .stepnum{
+    display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:7px;
+    background: linear-gradient(135deg, var(--blue), var(--navy)); color:#fff; font-family:var(--display);
+    font-size:12px; font-weight:700; flex:none;
+  }
+
+  .drop{
+    border:1.5px dashed var(--line); border-radius:var(--radius); padding:30px; text-align:center;
+    color:var(--text-dim); cursor:pointer; background:var(--panel-2); transition:.15s border-color, .15s background;
+    font-family:var(--ui); font-size:14px;
+  }
+  .drop:hover{ border-color:var(--blue); background:#eaf3ff; }
+  .drop input{ display:none; }
+
+  .filelist{ margin-top:14px; display:flex; flex-direction:column; gap:8px; }
+  .filerow{
+    display:flex; align-items:center; gap:10px; font-size:13px;
+    padding:9px 12px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px;
+  }
+  .filerow .nm{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--mono); }
+  .filerow button{ background:none; border:1px solid var(--line); color:var(--red); cursor:pointer; font-size:11px; padding:4px 9px; border-radius:7px; font-family:var(--ui); font-weight:500; }
+  .filerow button:hover{ border-color:var(--red); background:#fdeeee; }
+
+  .presetgrid{ display:flex; flex-wrap:wrap; gap:12px; margin-bottom:14px; }
+  .preset{
+    display:flex; align-items:center; gap:9px; background:var(--panel-2); border:1px solid var(--line);
+    border-radius:12px; padding:9px 12px;
+  }
+  .presetbadge{
+    display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%;
+    background: linear-gradient(135deg, var(--blue-light), var(--blue)); color:#fff; font-family:var(--display);
+    font-size:11px; font-weight:700; flex:none;
+  }
+  .preset input[type=text]{ width:100px; }
+  .preset input[type=number]{ width:66px; }
+  .preset button.rm{ background:none; border:1px solid var(--line); color:var(--red); cursor:pointer; font-size:11px; padding:4px 8px; border-radius:7px; font-family:var(--ui); }
+
+  input, select{
+    background:#fff; border:1px solid var(--line); color:var(--text); border-radius:8px;
+    padding:7px 9px; font-family:var(--ui); font-size:13px;
+  }
+  input[type=number]{ font-family:var(--mono); }
+  input:focus, select:focus{ outline:2px solid var(--blue); outline-offset:1px; }
+
+  button.btn{
+    font-family:var(--display); font-weight:700; font-size:13.5px;
+    background: linear-gradient(135deg, var(--blue), var(--navy)); color:#fff; border:none; border-radius:10px;
+    padding:11px 18px; cursor:pointer; box-shadow: 0 6px 16px -8px rgba(11,37,84,.55);
+    transition:.15s transform, .15s box-shadow;
+  }
+  button.btn:hover{ transform:translateY(-1px); box-shadow: 0 8px 20px -8px rgba(11,37,84,.6); }
+  button.btn.ghost{ background:transparent; color:var(--navy); border:1.5px solid var(--line); box-shadow:none; }
+  button.btn.ghost:hover{ border-color:var(--blue); color:var(--blue); transform:none; box-shadow:none; }
+  button.btn:disabled{ opacity:.45; cursor:not-allowed; transform:none; box-shadow:none; }
+
+  .bulkrow{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:16px; padding:14px; background:var(--panel-2); border:1px solid var(--line); border-radius:12px; }
+  .bulkrow label{ font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px; font-weight:500; }
+  .bulkfield{ display:flex; flex-direction:column; }
+
+  table{ width:100%; border-collapse:collapse; font-size:13px; }
+  th{ text-align:left; color:var(--text-dim); font-weight:600; text-transform:uppercase; letter-spacing:.04em; font-size:10.5px; padding:8px; border-bottom:1px solid var(--line); }
+  td{ padding:9px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tr:last-child td{ border-bottom:none; }
+  td input{ width:100%; min-width:70px; }
+  .art-thumb{ width:34px; height:34px; border-radius:8px; object-fit:cover; border:1px solid var(--line); background:var(--panel-2); flex:none; }
+  .art-cell{ display:flex; align-items:center; gap:6px; }
+  .art-cell input[type=file]{ font-size:10px; width:90px; }
+
+  .outputs{ display:flex; flex-direction:column; gap:6px; }
+  .outrow{ display:flex; align-items:center; gap:8px; font-size:11.5px; }
+  .outname{ font-family:var(--mono); color:var(--text); }
+  .outmult{ color:var(--text-dim); }
+  .rowplay{ background:none; border:1px solid var(--line); color:var(--navy); border-radius:7px; cursor:pointer; padding:3px 8px; font-size:11px; font-family:var(--ui); font-weight:500; }
+  .rowplay:hover{ border-color:var(--blue); color:var(--blue); }
+
+  #status{ font-size:13px; color:var(--text-dim); min-height:16px; margin-top:12px; }
+  .progressbar{ height:5px; background:var(--panel-2); border-radius:3px; overflow:hidden; margin-top:8px; display:none; }
+  .progressbar > div{ height:100%; width:0%; background:linear-gradient(90deg, var(--blue-light), var(--blue)); transition:width .2s; }
+  .empty{ color:var(--text-dim); font-size:13px; font-style:italic; }
+  .footerbar{ display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+
+  #downloadArea{ margin-top:14px; }
+  #downloadLink{
+    display:inline-block; font-family:var(--display); font-weight:700; font-size:13.5px;
+    background: linear-gradient(135deg, var(--blue), var(--navy)); color:#fff; border-radius:10px;
+    padding:11px 18px; text-decoration:none; box-shadow: 0 6px 16px -8px rgba(11,37,84,.55);
+  }
+  #downloadLink:hover{ transform:translateY(-1px); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="inner">
+    <h1>Batch WAV Tool</h1>
+    <span class="tag">speed &amp; pitch presets · id3 + info tags · one metadata pass per song</span>
+  </div>
+</header>
+
+<main>
+
+<section>
+  <h2><span class="stepnum">1</span> Load WAVs</h2>
+  <div class="drop" id="drop">
+    Drop .wav files here, or tap to browse
+    <input type="file" id="fileInput" accept=".wav,audio/wav" multiple>
+  </div>
+  <div class="filelist" id="filelist"><div class="empty">No files loaded yet.</div></div>
+</section>
+
+<section>
+  <h2><span class="stepnum">2</span> Speed / pitch presets</h2>
+  <div class="presetgrid" id="presetgrid"></div>
+  <button class="btn ghost" id="addPreset">+ Add preset</button>
+</section>
+
+<section id="metaSection" style="display:none;">
+  <h2><span class="stepnum">3</span> Metadata — one entry per song, applied to every preset variant</h2>
+
+  <div class="bulkrow">
+    <div class="bulkfield"><label>Artist (all songs)</label><input type="text" id="bulkArtist" placeholder="Artist"></div>
+    <div class="bulkfield"><label>Album (all songs)</label><input type="text" id="bulkAlbum" placeholder="Album"></div>
+    <div class="bulkfield"><label>Year (all songs)</label><input type="number" id="bulkYear" placeholder="2026" style="width:80px;"></div>
+    <div class="bulkfield"><label>Album art (all songs)</label><input type="file" id="bulkArt" accept="image/*"></div>
+    <button class="btn ghost" id="applyBulk">Apply to all songs</button>
+  </div>
+
+  <div style="overflow-x:auto;">
+  <table>
+    <thead>
+      <tr>
+        <th>Source file</th><th>Title</th><th>Artist</th><th>Album</th>
+        <th>Year</th><th>Track #</th><th>Art</th><th>Output files (per preset)</th>
+      </tr>
+    </thead>
+    <tbody id="songBody"></tbody>
+  </table>
+  </div>
+</section>
+
+<section id="exportSection" style="display:none;">
+  <h2><span class="stepnum">4</span> Process &amp; export</h2>
+  <div class="footerbar">
+    <button class="btn" id="exportAll">Process all &amp; build ZIP</button>
+    <span id="status"></span>
+  </div>
+  <div class="progressbar" id="progressbar"><div id="progressfill"></div></div>
+  <div id="downloadArea"></div>
+</section>
+
+</main>
+
+<audio id="previewPlayer" style="display:none;"></audio>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  // ---------- state ----------
+  let sourceFiles = [];   // {id, file, name, title, artist, album, year, track, artFile, artUrl, arrayBuffer, audioBuffer}
+  let presets = [];       // {id, label, mult}
+  let idSeq = 1;
+  const nextId = () => idSeq++;
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  let lastZipUrl = null;
+
+  presets.push({id: nextId(), label: "Sped Up", mult: 1.25});
+  presets.push({id: nextId(), label: "Slowed", mult: 0.87});
+
+  // ---------- DOM ----------
+  const fileInput = document.getElementById('fileInput');
+  const drop = document.getElementById('drop');
+  const filelistEl = document.getElementById('filelist');
+  const presetgrid = document.getElementById('presetgrid');
+  const metaSection = document.getElementById('metaSection');
+  const exportSection = document.getElementById('exportSection');
+  const songBody = document.getElementById('songBody');
+  const statusEl = document.getElementById('status');
+  const progressbar = document.getElementById('progressbar');
+  const progressfill = document.getElementById('progressfill');
+  const previewPlayer = document.getElementById('previewPlayer');
+  const downloadArea = document.getElementById('downloadArea');
+
+  // ---------- file loading ----------
+  drop.addEventListener('click', () => fileInput.click());
+  drop.addEventListener('dragover', e => { e.preventDefault(); });
+  drop.addEventListener('drop', e => { e.preventDefault(); handleFiles(e.dataTransfer.files); });
+  fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+  function handleFiles(fileListObj){
+    const files = Array.from(fileListObj).filter(f => /\.wav$/i.test(f.name));
+    files.forEach(f => {
+      sourceFiles.push({
+        id: nextId(), file: f,
+        name: f.name.replace(/\.wav$/i, ''),
+        title: f.name.replace(/\.wav$/i, ''),
+        artist: '', album: '', year: '', track: sourceFiles.length + 1,
+        artFile: null, artUrl: null,
+        arrayBuffer: null, audioBuffer: null
+      });
+    });
+    renderFileList();
+    renderSongs();
+    metaSection.style.display = sourceFiles.length ? 'block' : 'none';
+    exportSection.style.display = sourceFiles.length ? 'block' : 'none';
+  }
+
+  function renderFileList(){
+    if (!sourceFiles.length){ filelistEl.innerHTML = '<div class="empty">No files loaded yet.</div>'; return; }
+    filelistEl.innerHTML = '';
+    sourceFiles.forEach(sf => {
+      const row = document.createElement('div');
+      row.className = 'filerow';
+      row.innerHTML = `<span class="nm">${escapeHtml(sf.name)}.wav</span>
+        <span style="color:var(--text-dim)">${(sf.file.size/1024/1024).toFixed(2)} MB</span>
+        <button data-id="${sf.id}">Remove</button>`;
+      row.querySelector('button').addEventListener('click', () => {
+        sourceFiles = sourceFiles.filter(x => x.id !== sf.id);
+        renderFileList();
+        renderSongs();
+        metaSection.style.display = sourceFiles.length ? 'block' : 'none';
+        exportSection.style.display = sourceFiles.length ? 'block' : 'none';
+      });
+      filelistEl.appendChild(row);
+    });
+  }
+
+  // ---------- presets ----------
+  document.getElementById('addPreset').addEventListener('click', () => {
+    presets.push({id: nextId(), label: "Custom", mult: 1.0});
+    renderPresets();
+    renderSongs();
+  });
+
+  function renderPresets(){
+    presetgrid.innerHTML = '';
+    presets.forEach((p, i) => {
+      const el = document.createElement('div');
+      el.className = 'preset';
+      el.innerHTML = `
+        <span class="presetbadge">${i + 1}</span>
+        <input type="text" value="${escapeAttr(p.label)}" data-field="label">
+        <span style="color:var(--text-dim); font-size:11px;">&times;</span>
+        <input type="number" step="0.01" min="0.1" max="4" value="${p.mult}" data-field="mult">
+        <button class="rm">Remove</button>`;
+      el.querySelector('[data-field=label]').addEventListener('input', e => { p.label = e.target.value; renderSongs(); });
+      el.querySelector('[data-field=mult]').addEventListener('input', e => { p.mult = parseFloat(e.target.value) || 1.0; renderSongs(); });
+      el.querySelector('.rm').addEventListener('click', () => {
+        presets = presets.filter(x => x.id !== p.id);
+        renderPresets();
+        renderSongs();
+      });
+      presetgrid.appendChild(el);
+    });
+  }
+  renderPresets();
+
+  // ---------- songs table ----------
+  // variantIndex is the preset's fixed position (1, 2, 3, ...) so every song
+  // gets the same numbering across its presets — never all "1".
+  function outputFilename(song, variantIndex){
+    const base = sanitizeFilename(song.title);
+    return presets.length > 1 ? `${base} ${variantIndex}.wav` : `${base}.wav`;
+  }
+
+  function renderSongs(){
+    songBody.innerHTML = '';
+    sourceFiles.forEach(sf => {
+      const tr = document.createElement('tr');
+      const outputsHtml = presets.map((p, i) => `
+        <div class="outrow">
+          <span class="presetbadge" style="width:18px;height:18px;font-size:10px;">${i + 1}</span>
+          <button class="rowplay" data-preset="${p.id}">Preview</button>
+          <span class="outname">${escapeHtml(outputFilename(sf, i + 1))}</span>
+          <span class="outmult">&times;${p.mult}</span>
+        </div>`).join('');
+
+      tr.innerHTML = `
+        <td style="font-family:var(--mono); color:var(--text-dim); white-space:nowrap;">${escapeHtml(sf.name)}.wav</td>
+        <td><input type="text" data-field="title" value="${escapeAttr(sf.title)}"></td>
+        <td><input type="text" data-field="artist" value="${escapeAttr(sf.artist)}"></td>
+        <td><input type="text" data-field="album" value="${escapeAttr(sf.album)}"></td>
+        <td><input type="number" data-field="year" value="${escapeAttr(sf.year)}" style="width:64px;"></td>
+        <td><input type="number" data-field="track" value="${sf.track}" style="width:48px;"></td>
+        <td><div class="art-cell">
+              <img class="art-thumb" src="${sf.artUrl || ''}" style="${sf.artUrl ? '' : 'visibility:hidden;'}">
+              <input type="file" accept="image/*" data-field="art">
+            </div></td>
+        <td><div class="outputs">${outputsHtml || '<span class="empty">Add a preset</span>'}</div></td>`;
+
+      tr.querySelector('[data-field=title]').addEventListener('input', e => { sf.title = e.target.value; renderSongs(); });
+      tr.querySelector('[data-field=artist]').addEventListener('input', e => sf.artist = e.target.value);
+      tr.querySelector('[data-field=album]').addEventListener('input', e => sf.album = e.target.value);
+      tr.querySelector('[data-field=year]').addEventListener('input', e => sf.year = e.target.value);
+      tr.querySelector('[data-field=track]').addEventListener('input', e => sf.track = e.target.value);
+      tr.querySelector('[data-field=art]').addEventListener('change', e => {
+        const f = e.target.files[0];
+        if (!f) return;
+        sf.artFile = f;
+        readAsDataUrl(f).then(url => { sf.artUrl = url; renderSongs(); });
+      });
+      tr.querySelectorAll('[data-preset]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const preset = presets.find(p => p.id == btn.getAttribute('data-preset'));
+          previewSongPreset(sf, preset);
+        });
+      });
+
+      songBody.appendChild(tr);
+    });
+  }
+
+  // ---------- bulk apply ----------
+  document.getElementById('applyBulk').addEventListener('click', async () => {
+    const artist = document.getElementById('bulkArtist').value;
+    const album = document.getElementById('bulkAlbum').value;
+    const year = document.getElementById('bulkYear').value;
+    const artFileInput = document.getElementById('bulkArt');
+    const artFile = artFileInput.files[0] || null;
+    let artUrl = null;
+    if (artFile){ artUrl = await readAsDataUrl(artFile); }
+
+    sourceFiles.forEach(sf => {
+      if (artist) sf.artist = artist;
+      if (album) sf.album = album;
+      if (year) sf.year = year;
+      if (artFile){ sf.artFile = artFile; sf.artUrl = artUrl; }
+    });
+    renderSongs();
+  });
+
+  function readAsDataUrl(file){
+    return new Promise(res => {
+      const r = new FileReader();
+      r.onload = e => res(e.target.result);
+      r.readAsDataURL(file);
+    });
+  }
+
+  // ---------- audio helpers ----------
+  async function getDecodedBuffer(sf){
+    if (sf.audioBuffer) return sf.audioBuffer;
+    if (!sf.arrayBuffer) sf.arrayBuffer = await sf.file.arrayBuffer();
+    const copy = sf.arrayBuffer.slice(0);
+    sf.audioBuffer = await audioCtx.decodeAudioData(copy);
+    return sf.audioBuffer;
+  }
+
+  // Resample by `mult`: mult>1 = faster & higher pitch, mult<1 = slower & lower pitch
+  function resample(audioBuffer, mult){
+    const numChannels = audioBuffer.numberOfChannels;
+    const originalLength = audioBuffer.length;
+    const newLength = Math.max(1, Math.round(originalLength / mult));
+    const channels = [];
+    for (let c = 0; c < numChannels; c++){
+      const input = audioBuffer.getChannelData(c);
+      const output = new Float32Array(newLength);
+      for (let i = 0; i < newLength; i++){
+        const srcPos = i * mult;
+        const idx0 = Math.floor(srcPos);
+        const idx1 = Math.min(idx0 + 1, originalLength - 1);
+        const frac = srcPos - idx0;
+        output[i] = input[idx0] * (1 - frac) + (input[idx1] || 0) * frac;
+      }
+      channels.push(output);
+    }
+    return { channels, sampleRate: audioBuffer.sampleRate, numChannels };
+  }
+
+  // ---------- WAV + metadata encoding ----------
+  function writeAscii(view, offset, str){
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  }
+  function concatBytes(arrays){
+    const total = arrays.reduce((a, b) => a + b.length, 0);
+    const out = new Uint8Array(total);
+    let off = 0;
+    arrays.forEach(a => { out.set(a, off); off += a.length; });
+    return out;
+  }
+  function padEven(bytes){
+    return bytes.length % 2 === 0 ? bytes : concatBytes([bytes, new Uint8Array([0])]);
+  }
+
+  function textFrame(id, text){
+    const enc = new TextEncoder();
+    const textBytes = enc.encode(String(text));
+    const content = concatBytes([new Uint8Array([0x03]), textBytes]);
+    const frame = new Uint8Array(10 + content.length);
+    const dv = new DataView(frame.buffer);
+    writeAscii(dv, 0, id);
+    dv.setUint32(4, content.length, false);
+    frame.set(content, 10);
+    return frame;
+  }
+
+  function apicFrame(mimeType, imgBytes){
+    const enc = new TextEncoder();
+    const content = concatBytes([
+      new Uint8Array([0x00]),
+      enc.encode(mimeType),
+      new Uint8Array([0x00]),
+      new Uint8Array([0x03]),
+      new Uint8Array([0x00]),
+      new Uint8Array(imgBytes)
+    ]);
+    const frame = new Uint8Array(10 + content.length);
+    const dv = new DataView(frame.buffer);
+    writeAscii(dv, 0, 'APIC');
+    dv.setUint32(4, content.length, false);
+    frame.set(content, 10);
+    return frame;
+  }
+
+  function syncsafe(size){
+    return new Uint8Array([
+      (size >>> 21) & 0x7F, (size >>> 14) & 0x7F, (size >>> 7) & 0x7F, size & 0x7F
+    ]);
+  }
+
+  async function buildId3Chunk(meta){
+    const frames = [];
+    if (meta.title)  frames.push(textFrame('TIT2', meta.title));
+    if (meta.artist) frames.push(textFrame('TPE1', meta.artist));
+    if (meta.album)  frames.push(textFrame('TALB', meta.album));
+    if (meta.year)   frames.push(textFrame('TYER', meta.year));
+    if (meta.track)  frames.push(textFrame('TRCK', meta.track));
+    if (meta.artFile){
+      const imgBytes = new Uint8Array(await meta.artFile.arrayBuffer());
+      frames.push(apicFrame(meta.artFile.type || 'image/jpeg', imgBytes));
+    }
+    const frameBytes = concatBytes(frames);
+    const header = new Uint8Array(10);
+    writeAscii(new DataView(header.buffer), 0, 'ID3');
+    header[3] = 0x03; header[4] = 0x00; header[5] = 0x00;
+    header.set(syncsafe(frameBytes.length), 6);
+    const id3Tag = concatBytes([header, frameBytes]);
+
+    const chunkData = padEven(id3Tag);
+    const chunk = new Uint8Array(8 + chunkData.length);
+    const dv = new DataView(chunk.buffer);
+    writeAscii(dv, 0, 'id3 ');
+    dv.setUint32(4, id3Tag.length, true);
+    chunk.set(chunkData, 8);
+    return chunk;
+  }
+
+  function infoSubChunk(id, text){
+    const enc = new TextEncoder();
+    const raw = concatBytes([enc.encode(String(text)), new Uint8Array([0])]);
+    const data = padEven(raw);
+    const chunk = new Uint8Array(8 + data.length);
+    const dv = new DataView(chunk.buffer);
+    writeAscii(dv, 0, id);
+    dv.setUint32(4, raw.length, true);
+    chunk.set(data, 8);
+    return chunk;
+  }
+
+  function buildListInfoChunk(meta){
+    const subs = [];
+    if (meta.title)  subs.push(infoSubChunk('INAM', meta.title));
+    if (meta.artist) subs.push(infoSubChunk('IART', meta.artist));
+    if (meta.album)  subs.push(infoSubChunk('IPRD', meta.album));
+    if (meta.year)   subs.push(infoSubChunk('ICRD', meta.year));
+    if (meta.track)  subs.push(infoSubChunk('ITRK', meta.track));
+    if (!subs.length) return new Uint8Array(0);
+    const subBytes = concatBytes(subs);
+    const listData = concatBytes([new TextEncoder().encode('INFO'), subBytes]);
+    const chunk = new Uint8Array(8 + listData.length);
+    const dv = new DataView(chunk.buffer);
+    writeAscii(dv, 0, 'LIST');
+    dv.setUint32(4, listData.length, true);
+    chunk.set(listData, 8);
+    return chunk;
+  }
+
+  async function encodeWav(channels, sampleRate, numChannels, meta){
+    const numFrames = channels[0].length;
+    const blockAlign = numChannels * 2;
+    const dataSize = numFrames * blockAlign;
+
+    const interleaved = new Int16Array(numFrames * numChannels);
+    for (let i = 0; i < numFrames; i++){
+      for (let c = 0; c < numChannels; c++){
+        let s = channels[c][i];
+        s = Math.max(-1, Math.min(1, s));
+        interleaved[i * numChannels + c] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+    }
+
+    const headerSize = 44;
+    const header = new ArrayBuffer(headerSize);
+    const dv = new DataView(header);
+    writeAscii(dv, 0, 'RIFF');
+    writeAscii(dv, 8, 'WAVE');
+    writeAscii(dv, 12, 'fmt ');
+    dv.setUint32(16, 16, true);
+    dv.setUint16(20, 1, true);
+    dv.setUint16(22, numChannels, true);
+    dv.setUint32(24, sampleRate, true);
+    dv.setUint32(28, sampleRate * blockAlign, true);
+    dv.setUint16(32, blockAlign, true);
+    dv.setUint16(34, 16, true);
+    writeAscii(dv, 36, 'data');
+    dv.setUint32(40, dataSize, true);
+
+    const pcmBytes = new Uint8Array(interleaved.buffer);
+    const id3Chunk = await buildId3Chunk(meta);
+    const listChunk = buildListInfoChunk(meta);
+
+    const riffSize = (headerSize - 8) + dataSize + id3Chunk.length + listChunk.length;
+    dv.setUint32(4, riffSize, true);
+
+    const finalBytes = concatBytes([new Uint8Array(header), pcmBytes, id3Chunk, listChunk]);
+    return new Blob([finalBytes], { type: 'audio/wav' });
+  }
+
+  function sanitizeFilename(name){
+    return (name || 'untitled').replace(/[\\/:*?"<>|]/g, '').trim() || 'untitled';
+  }
+
+  async function renderSongPresetBlob(song, preset){
+    const buffer = await getDecodedBuffer(song);
+    const { channels, sampleRate, numChannels } = resample(buffer, preset.mult);
+    const meta = {
+      title: song.title, artist: song.artist, album: song.album,
+      year: song.year, track: song.track, artFile: song.artFile
+    };
+    return encodeWav(channels, sampleRate, numChannels, meta);
+  }
+
+  async function previewSongPreset(song, preset){
+    statusEl.textContent = 'Rendering preview…';
+    try {
+      const blob = await renderSongPresetBlob(song, preset);
+      const url = URL.createObjectURL(blob);
+      previewPlayer.src = url;
+      await previewPlayer.play();
+      statusEl.textContent = `Previewing: ${song.title} (${preset.label} ×${preset.mult})`;
+    } catch(err){
+      console.error(err);
+      statusEl.textContent = 'Preview failed: ' + err.message;
+    }
+  }
+
+  // ---------- export all ----------
+  document.getElementById('exportAll').addEventListener('click', async () => {
+    if (!sourceFiles.length){ alert('Load at least one WAV first.'); return; }
+    if (!presets.length){ alert('Add at least one preset first.'); return; }
+
+    const btn = document.getElementById('exportAll');
+    btn.disabled = true;
+    downloadArea.innerHTML = '';
+    if (lastZipUrl){ URL.revokeObjectURL(lastZipUrl); lastZipUrl = null; }
+    progressbar.style.display = 'block';
+    const zip = new JSZip();
+    const usedNames = {};
+    const total = sourceFiles.length * presets.length;
+    let done = 0;
+
+    try {
+      for (const song of sourceFiles){
+        for (let i = 0; i < presets.length; i++){
+          const preset = presets[i];
+          statusEl.textContent = `Processing ${done + 1}/${total}: ${song.title} (${preset.label})`;
+          progressfill.style.width = Math.round((done / total) * 100) + '%';
+
+          const blob = await renderSongPresetBlob(song, preset);
+          let filename = outputFilename(song, i + 1);
+          if (usedNames[filename]){
+            usedNames[filename]++;
+            filename = filename.replace(/\.wav$/i, '') + ' (' + usedNames[filename] + ').wav';
+          } else {
+            usedNames[filename] = 1;
+          }
+          zip.file(filename, blob);
+          done++;
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+
+      progressfill.style.width = '100%';
+      statusEl.textContent = 'Building ZIP…';
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(zipBlob);
+      lastZipUrl = url;
+
+      statusEl.textContent = `Ready — ${total} file(s) processed.`;
+      downloadArea.innerHTML = '';
+      const a = document.createElement('a');
+      a.id = 'downloadLink';
+      a.href = url;
+      a.download = 'batch-wav-export.zip';
+      a.textContent = 'Download batch-wav-export.zip';
+      downloadArea.appendChild(a);
+    } catch (err){
+      console.error(err);
+      statusEl.textContent = 'Export failed: ' + err.message;
+    } finally {
+      btn.disabled = false;
+      setTimeout(() => { progressbar.style.display = 'none'; progressfill.style.width = '0%'; }, 1200);
+    }
+  });
+
+  // ---------- utils ----------
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function escapeAttr(s){ return escapeHtml(s); }
+
+})();
+</script>
+</body>
+</html>
