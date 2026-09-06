@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Batch WAV Tool — Speed/Pitch &amp; Tags</title>
+<title>Batch Audio Tool — Speed/Pitch &amp; Tags</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -74,6 +74,7 @@
     padding:9px 12px; background:var(--panel-2); border:1px solid var(--line); border-radius:10px;
   }
   .filerow .nm{ flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-family:var(--mono); }
+  .filerow .fmt{ font-family:var(--mono); font-size:10.5px; color:var(--blue); border:1px solid var(--line); border-radius:6px; padding:2px 6px; }
   .filerow button{ background:none; border:1px solid var(--line); color:var(--red); cursor:pointer; font-size:11px; padding:4px 9px; border-radius:7px; font-family:var(--ui); font-weight:500; }
   .filerow button:hover{ border-color:var(--red); background:#fdeeee; }
 
@@ -129,6 +130,9 @@
   .rowplay{ background:none; border:1px solid var(--line); color:var(--navy); border-radius:7px; cursor:pointer; padding:3px 8px; font-size:11px; font-family:var(--ui); font-weight:500; }
   .rowplay:hover{ border-color:var(--blue); color:var(--blue); }
 
+  .formatrow{ display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:16px; }
+  .formatrow .bulkfield label{ font-size:11px; color:var(--text-dim); display:block; margin-bottom:4px; font-weight:500; }
+
   #status{ font-size:13px; color:var(--text-dim); min-height:16px; margin-top:12px; }
   .progressbar{ height:5px; background:var(--panel-2); border-radius:3px; overflow:hidden; margin-top:8px; display:none; }
   .progressbar > div{ height:100%; width:0%; background:linear-gradient(90deg, var(--blue-light), var(--blue)); transition:width .2s; }
@@ -148,18 +152,18 @@
 
 <header>
   <div class="inner">
-    <h1>Batch WAV Tool</h1>
-    <span class="tag">speed &amp; pitch presets · id3 + info tags · one metadata pass per song</span>
+    <h1>Batch Audio Tool</h1>
+    <span class="tag">WAV &amp; MP3 · speed &amp; pitch presets · id3 tags · one metadata pass per song</span>
   </div>
 </header>
 
 <main>
 
 <section>
-  <h2><span class="stepnum">1</span> Load WAVs</h2>
+  <h2><span class="stepnum">1</span> Load audio files</h2>
   <div class="drop" id="drop">
-    Drop .wav files here, or tap to browse
-    <input type="file" id="fileInput" accept=".wav,audio/wav" multiple>
+    Drop .wav or .mp3 files here, or tap to browse
+    <input type="file" id="fileInput" accept=".wav,.mp3,audio/wav,audio/mpeg,audio/mp3" multiple>
   </div>
   <div class="filelist" id="filelist"><div class="empty">No files loaded yet.</div></div>
 </section>
@@ -196,6 +200,25 @@
 
 <section id="exportSection" style="display:none;">
   <h2><span class="stepnum">4</span> Process &amp; export</h2>
+
+  <div class="formatrow">
+    <div class="bulkfield">
+      <label>Output format</label>
+      <select id="outputFormat">
+        <option value="wav">WAV (lossless)</option>
+        <option value="mp3">MP3 (compressed)</option>
+      </select>
+    </div>
+    <div class="bulkfield" id="bitrateField">
+      <label>MP3 bitrate</label>
+      <select id="mp3Bitrate">
+        <option value="128">128 kbps</option>
+        <option value="192" selected>192 kbps</option>
+        <option value="320">320 kbps</option>
+      </select>
+    </div>
+  </div>
+
   <div class="footerbar">
     <button class="btn" id="exportAll">Process all &amp; build ZIP</button>
     <span id="status"></span>
@@ -209,12 +232,13 @@
 <audio id="previewPlayer" style="display:none;"></audio>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lamejs/1.2.0/lame.min.js"></script>
 <script>
 (function(){
   "use strict";
 
   // ---------- state ----------
-  let sourceFiles = [];   // {id, file, name, title, artist, album, year, track, artFile, artUrl, arrayBuffer, audioBuffer}
+  let sourceFiles = [];   // {id, file, name, ext, title, artist, album, year, track, artFile, artUrl, arrayBuffer, audioBuffer}
   let presets = [];       // {id, label, mult}
   let idSeq = 1;
   const nextId = () => idSeq++;
@@ -237,6 +261,17 @@
   const progressfill = document.getElementById('progressfill');
   const previewPlayer = document.getElementById('previewPlayer');
   const downloadArea = document.getElementById('downloadArea');
+  const outputFormatEl = document.getElementById('outputFormat');
+  const mp3BitrateEl = document.getElementById('mp3Bitrate');
+
+  outputFormatEl.addEventListener('change', () => {
+    document.getElementById('bitrateField').style.display = outputFormatEl.value === 'mp3' ? 'flex' : 'none';
+    renderSongs();
+  });
+  document.getElementById('bitrateField').style.display = outputFormatEl.value === 'mp3' ? 'flex' : 'none';
+
+  function currentFormat(){ return outputFormatEl.value; }
+  function currentBitrate(){ return parseInt(mp3BitrateEl.value, 10) || 192; }
 
   // ---------- file loading ----------
   drop.addEventListener('click', () => fileInput.click());
@@ -245,12 +280,13 @@
   fileInput.addEventListener('change', e => handleFiles(e.target.files));
 
   function handleFiles(fileListObj){
-    const files = Array.from(fileListObj).filter(f => /\.wav$/i.test(f.name));
+    const files = Array.from(fileListObj).filter(f => /\.(wav|mp3)$/i.test(f.name));
     files.forEach(f => {
+      const ext = /\.mp3$/i.test(f.name) ? 'mp3' : 'wav';
+      const baseName = f.name.replace(/\.(wav|mp3)$/i, '');
       sourceFiles.push({
-        id: nextId(), file: f,
-        name: f.name.replace(/\.wav$/i, ''),
-        title: f.name.replace(/\.wav$/i, ''),
+        id: nextId(), file: f, name: baseName, ext,
+        title: baseName,
         artist: '', album: '', year: '', track: sourceFiles.length + 1,
         artFile: null, artUrl: null,
         arrayBuffer: null, audioBuffer: null
@@ -268,7 +304,8 @@
     sourceFiles.forEach(sf => {
       const row = document.createElement('div');
       row.className = 'filerow';
-      row.innerHTML = `<span class="nm">${escapeHtml(sf.name)}.wav</span>
+      row.innerHTML = `<span class="fmt">${sf.ext.toUpperCase()}</span>
+        <span class="nm">${escapeHtml(sf.name)}.${sf.ext}</span>
         <span style="color:var(--text-dim)">${(sf.file.size/1024/1024).toFixed(2)} MB</span>
         <button data-id="${sf.id}">Remove</button>`;
       row.querySelector('button').addEventListener('click', () => {
@@ -317,7 +354,8 @@
   // gets the same numbering across its presets — never all "1".
   function outputFilename(song, variantIndex){
     const base = sanitizeFilename(song.title);
-    return presets.length > 1 ? `${base} ${variantIndex}.wav` : `${base}.wav`;
+    const ext = currentFormat();
+    return presets.length > 1 ? `${base} ${variantIndex}.${ext}` : `${base}.${ext}`;
   }
 
   function renderSongs(){
@@ -333,7 +371,7 @@
         </div>`).join('');
 
       tr.innerHTML = `
-        <td style="font-family:var(--mono); color:var(--text-dim); white-space:nowrap;">${escapeHtml(sf.name)}.wav</td>
+        <td style="font-family:var(--mono); color:var(--text-dim); white-space:nowrap;">${escapeHtml(sf.name)}.${sf.ext}</td>
         <td><input type="text" data-field="title" value="${escapeAttr(sf.title)}"></td>
         <td><input type="text" data-field="artist" value="${escapeAttr(sf.artist)}"></td>
         <td><input type="text" data-field="album" value="${escapeAttr(sf.album)}"></td>
@@ -424,7 +462,7 @@
     return { channels, sampleRate: audioBuffer.sampleRate, numChannels };
   }
 
-  // ---------- WAV + metadata encoding ----------
+  // ---------- shared byte helpers ----------
   function writeAscii(view, offset, str){
     for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
   }
@@ -439,6 +477,7 @@
     return bytes.length % 2 === 0 ? bytes : concatBytes([bytes, new Uint8Array([0])]);
   }
 
+  // ---------- ID3v2 tag (shared by WAV "id3 " chunk and raw MP3 prepend) ----------
   function textFrame(id, text){
     const enc = new TextEncoder();
     const textBytes = enc.encode(String(text));
@@ -475,7 +514,8 @@
     ]);
   }
 
-  async function buildId3Chunk(meta){
+  // Returns raw ID3v2.3 tag bytes (header + frames), no container wrapping.
+  async function buildId3TagBytes(meta){
     const frames = [];
     if (meta.title)  frames.push(textFrame('TIT2', meta.title));
     if (meta.artist) frames.push(textFrame('TPE1', meta.artist));
@@ -491,13 +531,16 @@
     writeAscii(new DataView(header.buffer), 0, 'ID3');
     header[3] = 0x03; header[4] = 0x00; header[5] = 0x00;
     header.set(syncsafe(frameBytes.length), 6);
-    const id3Tag = concatBytes([header, frameBytes]);
+    return concatBytes([header, frameBytes]);
+  }
 
-    const chunkData = padEven(id3Tag);
+  // Wraps a raw ID3v2 tag as a WAV "id3 " chunk (word-aligned, per RIFF rules).
+  function wrapId3AsWavChunk(id3TagBytes){
+    const chunkData = padEven(id3TagBytes);
     const chunk = new Uint8Array(8 + chunkData.length);
     const dv = new DataView(chunk.buffer);
     writeAscii(dv, 0, 'id3 ');
-    dv.setUint32(4, id3Tag.length, true);
+    dv.setUint32(4, id3TagBytes.length, true);
     chunk.set(chunkData, 8);
     return chunk;
   }
@@ -532,6 +575,7 @@
     return chunk;
   }
 
+  // ---------- WAV encode ----------
   async function encodeWav(channels, sampleRate, numChannels, meta){
     const numFrames = channels[0].length;
     const blockAlign = numChannels * 2;
@@ -563,7 +607,8 @@
     dv.setUint32(40, dataSize, true);
 
     const pcmBytes = new Uint8Array(interleaved.buffer);
-    const id3Chunk = await buildId3Chunk(meta);
+    const id3TagBytes = await buildId3TagBytes(meta);
+    const id3Chunk = wrapId3AsWavChunk(id3TagBytes);
     const listChunk = buildListInfoChunk(meta);
 
     const riffSize = (headerSize - 8) + dataSize + id3Chunk.length + listChunk.length;
@@ -571,6 +616,43 @@
 
     const finalBytes = concatBytes([new Uint8Array(header), pcmBytes, id3Chunk, listChunk]);
     return new Blob([finalBytes], { type: 'audio/wav' });
+  }
+
+  // ---------- MP3 encode (lamejs) ----------
+  async function encodeMp3(channels, sampleRate, numChannels, meta, kbps){
+    const encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, kbps);
+    const numFrames = channels[0].length;
+
+    const int16Channels = channels.map(ch => {
+      const out = new Int16Array(ch.length);
+      for (let i = 0; i < ch.length; i++){
+        let s = Math.max(-1, Math.min(1, ch[i]));
+        out[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      return out;
+    });
+
+    const blockSize = 1152;
+    const mp3Chunks = [];
+    for (let i = 0; i < numFrames; i += blockSize){
+      let mp3buf;
+      if (numChannels === 1){
+        mp3buf = encoder.encodeBuffer(int16Channels[0].subarray(i, i + blockSize));
+      } else {
+        mp3buf = encoder.encodeBuffer(
+          int16Channels[0].subarray(i, i + blockSize),
+          int16Channels[1].subarray(i, i + blockSize)
+        );
+      }
+      if (mp3buf.length > 0) mp3Chunks.push(new Uint8Array(mp3buf));
+    }
+    const endBuf = encoder.flush();
+    if (endBuf.length > 0) mp3Chunks.push(new Uint8Array(endBuf));
+
+    const id3TagBytes = await buildId3TagBytes(meta);
+    const mp3Bytes = concatBytes(mp3Chunks);
+    const finalBytes = concatBytes([id3TagBytes, mp3Bytes]);
+    return new Blob([finalBytes], { type: 'audio/mpeg' });
   }
 
   function sanitizeFilename(name){
@@ -584,6 +666,9 @@
       title: song.title, artist: song.artist, album: song.album,
       year: song.year, track: song.track, artFile: song.artFile
     };
+    if (currentFormat() === 'mp3'){
+      return encodeMp3(channels, sampleRate, numChannels, meta, currentBitrate());
+    }
     return encodeWav(channels, sampleRate, numChannels, meta);
   }
 
@@ -603,7 +688,7 @@
 
   // ---------- export all ----------
   document.getElementById('exportAll').addEventListener('click', async () => {
-    if (!sourceFiles.length){ alert('Load at least one WAV first.'); return; }
+    if (!sourceFiles.length){ alert('Load at least one audio file first.'); return; }
     if (!presets.length){ alert('Add at least one preset first.'); return; }
 
     const btn = document.getElementById('exportAll');
@@ -627,7 +712,8 @@
           let filename = outputFilename(song, i + 1);
           if (usedNames[filename]){
             usedNames[filename]++;
-            filename = filename.replace(/\.wav$/i, '') + ' (' + usedNames[filename] + ').wav';
+            const dot = filename.lastIndexOf('.');
+            filename = filename.slice(0, dot) + ' (' + usedNames[filename] + ')' + filename.slice(dot);
           } else {
             usedNames[filename] = 1;
           }
@@ -648,8 +734,8 @@
       const a = document.createElement('a');
       a.id = 'downloadLink';
       a.href = url;
-      a.download = 'batch-wav-export.zip';
-      a.textContent = 'Download batch-wav-export.zip';
+      a.download = 'batch-audio-export.zip';
+      a.textContent = 'Download batch-audio-export.zip';
       downloadArea.appendChild(a);
     } catch (err){
       console.error(err);
