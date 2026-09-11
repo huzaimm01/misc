@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hand-Tracked Racer</title>
+<style>
+  html,body{margin:0;height:100%;overflow:hidden;background:#0b0d10;font-family:-apple-system,Helvetica,Arial,sans-serif;color:#fff}
+  canvas{display:block}
+  #overlay{position:absolute;top:0;left:0;right:0;padding:20px 16px;text-align:center;z-index:2;background:linear-gradient(180deg,rgba(0,0,0,.6),transparent)}
+  #carSelect{margin-bottom:12px}
+  #carSelect button{margin:0 6px;padding:10px 18px;border-radius:8px;border:1px solid #555;background:#1b1e23;color:#fff;font-size:14px;cursor:pointer}
+  #carSelect button.active{background:#e63946;border-color:#e63946}
+  #spotifyRow{margin-bottom:12px}
+  #spotifyRow button{padding:9px 16px;border-radius:8px;border:1px solid #1DB954;background:#123;color:#1DB954;font-size:13px;cursor:pointer}
+  #spotifyRow button.connected{background:#1DB954;color:#fff}
+  #spotifyStatus{font-size:12px;color:#9f9;margin-left:8px}
+  #enterVR{padding:14px 30px;font-size:18px;border-radius:10px;border:none;background:#2a9d8f;color:#fff;cursor:pointer}
+  #enterVR:disabled{background:#444;color:#999}
+  #info{max-width:640px;margin:10px auto 0;font-size:12px;line-height:1.5;color:#bbb}
+  #desktopHelp{max-width:640px;margin:8px auto 0;font-size:11.5px;line-height:1.5;color:#888}
+  #hud{position:absolute;bottom:10px;left:10px;font-size:12px;color:#8f8;background:rgba(0,0,0,.4);padding:6px 10px;border-radius:6px;z-index:2}
+  #vrError{max-width:640px;margin:12px auto 0;font-size:13px;line-height:1.6;color:#ffb4b4;background:rgba(120,20,20,.35);border:1px solid #ff6b6b;border-radius:8px;padding:10px 14px;text-align:left;display:none;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<div id="overlay">
+  <div id="carSelect">
+    <button id="pickCoupe" class="active">6-Speed Coupe (H-shifter + clutch)</button>
+    <button id="pickF1">F1 Car (paddle shift, no clutch)</button>
+  </div>
+  <div id="spotifyRow">
+    <button id="spotifyBtn">Connect Spotify</button>
+    <span id="spotifyStatus">not connected</span>
+  </div>
+  <button id="enterVR">Enter VR</button>
+  <div id="vrError"></div>
+  <div id="info">
+    Needs a Meta Quest browser with Hand Tracking enabled (Settings &rarr; Movement Tracking), served over HTTPS.
+    No foot tracking exists on Quest, so gas/brake/clutch are now finger paddles behind the wheel instead of
+    floor pedals &mdash; no reaching down required.
+  </div>
+  <div id="desktopHelp">
+    Desktop preview (no headset): W/S accel-brake, C hold-clutch, A/D steer, Space handbrake (X releases),
+    1-6 select gear (coupe), Q/E paddle down/up (F1), R toggle reverse, P play/pause, [ / ] prev/next track.
+  </div>
+</div>
+<div id="hud"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ============================================================================
+   HAND-TRACKED RACER — single file WebXR prototype
+   ----------------------------------------------------------------------------
+   carRig = the moving cockpit (car). Camera + every cockpit prop (wheel,
+   paddles, shifter, handbrake, gauges, infotainment, door panel) are children
+   of carRig at fixed local positions. WebXR hand joints are reported in the
+   reference space that matches carRig-local coordinates (since camera is
+   parented under carRig), so joint positions compare directly against prop
+   positions with no extra transforms.
+   ========================================================================== */
+
+// ============================================================================
+// SPOTIFY CONFIG — fill in your own values from https://developer.spotify.com
+// Create an app there, then add this page's exact URL as a Redirect URI
+// (must be HTTPS, or http://127.0.0.1 for local testing — Spotify no longer
+// allows "localhost" or plain HTTP as of Nov 2025).
+// ============================================================================
+const SPOTIFY_CLIENT_ID = ''; // <-- paste your Client ID here
+const SPOTIFY_REDIRECT_URI = location.origin + location.pathname;
+const SPOTIFY_SCOPES = 'user-read-currently-playing user-read-playback-state user-modify-playback-state';
+
+// ---------- Renderer / scene ----------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fd0ea);
+scene.fog = new THREE.Fog(0x9fd0ea, 60, 420);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth / innerHeight, 0.05, 1000);
+camera.position.set(0, 3, -7);
+
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445533, 0.9);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff2d9, 1.1);
+sun.position.set(80, 120, 40);
+scene.add(sun);
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+// ---------- Terrain (hilly) ----------
+function terrainHeight(x, z) {
+  return Math.sin(x * 0.045) * 3.2 + Math.cos(z * 0.06) * 2.4 +
+         Math.sin((x + z) * 0.018) * 5.0 + Math.sin(x * 0.11 + z * 0.05) * 1.1;
+}
+const groundSize = 900, groundSeg = 180;
+const groundGeo = new THREE.PlaneGeometry(groundSize, groundSize, groundSeg, groundSeg);
+groundGeo.rotateX(-Math.PI / 2);
+{
+  const pos = groundGeo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    pos.setY(i, terrainHeight(x, z));
+  }
+  groundGeo.computeVertexNormals();
+}
+const groundMat = new THREE.MeshStandardMaterial({ color: 0x5c8a4a, roughness: 1, flatShading: true });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+scene.add(ground);
+
+const raycaster = new THREE.Raycaster();
+function groundSample(x, z) {
+  raycaster.set(new THREE.Vector3(x, 200, z), new THREE.Vector3(0, -1, 0));
+  const hit = raycaster.intersectObject(ground, false)[0];
+  if (hit) return { y: hit.point.y, normal: hit.face.normal.clone().transformDirection(ground.matrixWorld) };
+  return { y: terrainHeight(x, z), normal: new THREE.Vector3(0, 1, 0) };
+}
+
+// ---------- Racetrack ribbon ----------
+const trackPts = [
+  [0, 0], [40, -20], [70, -70], [50, -130], [0, -160], [-60, -150],
+  [-100, -100], [-90, -40], [-50, -10], [0, 0]
+].map(([x, z]) => new THREE.Vector3(x, 0, z));
+const trackCurve = new THREE.CatmullRomCurve3(trackPts, true);
+const trackWidth = 9;
+{
+  const N = 400;
+  const verts = [], idx = [];
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const p = trackCurve.getPoint(t);
+    const tangent = trackCurve.getTangent(t);
+    const side = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+    const l = p.clone().addScaledVector(side, trackWidth / 2);
+    const r = p.clone().addScaledVector(side, -trackWidth / 2);
+    l.y = groundSample(l.x, l.z).y + 0.06;
+    r.y = groundSample(r.x, r.z).y + 0.06;
+    verts.push(l.x, l.y, l.z, r.x, r.y, r.z);
+    if (i < N) {
+      const a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+      idx.push(a, b, c, b, d, c);
+    }
+  }
+  const trackGeo = new THREE.BufferGeometry();
+  trackGeo.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  trackGeo.setIndex(idx);
+  trackGeo.computeVertexNormals();
+  scene.add(new THREE.Mesh(trackGeo, new THREE.MeshStandardMaterial({ color: 0x2b2b30, roughness: 0.9 })));
+}
+const startPos = trackCurve.getPoint(0);
+const startTangent = trackCurve.getTangent(0);
+
+// ---------- Car visuals ----------
+function buildCarBody(color, lowSlung) {
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, lowSlung ? 0.55 : 0.75, 4.4),
+    new THREE.MeshStandardMaterial({ color, metalness: 0.4, roughness: 0.4 }));
+  body.position.y = lowSlung ? 0.45 : 0.55;
+  g.add(body);
+  if (!lowSlung) {
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.5, 2.0),
+      new THREE.MeshStandardMaterial({ color: 0x111318, metalness: 0.2, roughness: 0.3 }));
+    cabin.position.set(0, 1.0, -0.2);
+    g.add(cabin);
+  } else {
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.5), new THREE.MeshStandardMaterial({ color: 0x111318 }));
+    wing.position.set(0, 0.85, -2.1);
+    g.add(wing);
+  }
+  const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.3, 16);
+  wheelGeo.rotateZ(Math.PI / 2);
+  const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111111 });
+  const wheels = [];
+  [[-0.95, 0.35, 1.4], [0.95, 0.35, 1.4], [-0.95, 0.35, -1.4], [0.95, 0.35, -1.4]].forEach(p => {
+    const w = new THREE.Mesh(wheelGeo, wheelMat);
+    w.position.set(...p);
+    g.add(w);
+    wheels.push(w);
+  });
+  return { group: g, wheels };
+}
+const coupeVisual = buildCarBody(0xd62828, false);
+const f1Visual = buildCarBody(0x1d3557, true);
+f1Visual.group.visible = false;
+
+// ---------- carRig ----------
+const carRig = new THREE.Group();
+scene.add(carRig);
+carRig.add(coupeVisual.group, f1Visual.group);
+carRig.add(camera);
+
+// ---------- Steering wheel ----------
+const wheelGroup = new THREE.Group();
+wheelGroup.position.set(0, 1.0, -0.55);
+const wheelRing = new THREE.Mesh(new THREE.TorusGeometry(0.19, 0.02, 12, 32), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+wheelRing.rotation.x = Math.PI / 2;
+wheelGroup.add(wheelRing);
+const wheelHub = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.06, 12), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+wheelHub.rotation.x = Math.PI / 2;
+wheelGroup.add(wheelHub);
+carRig.add(wheelGroup);
+
+// ---------- Pull-paddle helper (gas / brake / clutch — replaces floor pedals) ----------
+// Each paddle is a small lever that visually slides toward the driver as you
+// pull it with a finger. No pinch needed — just hook a finger behind it and
+// pull, the way a real paddle shifter works.
+function makePullPaddle(color, restPos) {
+  const pivot = new THREE.Group();
+  pivot.position.copy(restPos);
+  const blade = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.09, 0.02), new THREE.MeshStandardMaterial({ color }));
+  pivot.add(blade);
+  return { pivot, blade, restZ: restPos.z, travel: 0.09, pull: 0 };
+}
+function updatePullPaddle(paddle, radiusXY = 0.055) {
+  let maxPull = 0;
+  ['left', 'right'].forEach(side => {
+    const h = xrHands[side];
+    if (!h) return;
+    const p = h.indexTip;
+    const dx = p.x - paddle.pivot.position.x, dy = p.y - paddle.pivot.position.y;
+    if (Math.abs(dx) < radiusXY && Math.abs(dy) < radiusXY + 0.02) {
+      const pull = THREE.MathUtils.clamp((p.z - paddle.restZ) / paddle.travel, 0, 1);
+      maxPull = Math.max(maxPull, pull);
+    }
+  });
+  paddle.pull = THREE.MathUtils.lerp(paddle.pull, maxPull, 0.5);
+  paddle.blade.position.z = paddle.pull * paddle.travel * 0.6;
+  return paddle.pull;
+}
+
+// Coupe: throttle (right), brake (left, upper), clutch (left, lower — below brake)
+const coupeControls = new THREE.Group();
+const throttlePaddleCoupe = makePullPaddle(0x2a9d8f, new THREE.Vector3(0.16, 1.00, -0.50));
+const brakePaddleCoupe = makePullPaddle(0xe63946, new THREE.Vector3(-0.16, 1.07, -0.50));
+const clutchPaddleCoupe = makePullPaddle(0x457b9d, new THREE.Vector3(-0.16, 0.93, -0.50));
+coupeControls.add(throttlePaddleCoupe.pivot, brakePaddleCoupe.pivot, clutchPaddleCoupe.pivot);
+
+// F1: throttle (right, lower) + brake (left, lower) pull-paddles, plus tap shift paddles up top
+const f1Controls = new THREE.Group();
+const throttlePaddleF1 = makePullPaddle(0x2a9d8f, new THREE.Vector3(0.16, 0.95, -0.50));
+const brakePaddleF1 = makePullPaddle(0xe63946, new THREE.Vector3(-0.16, 0.95, -0.50));
+const paddleTapGeo = new THREE.BoxGeometry(0.09, 0.03, 0.04);
+const paddleTapMat = new THREE.MeshStandardMaterial({ color: 0xffb703 });
+const shiftDownPaddle = new THREE.Mesh(paddleTapGeo, paddleTapMat); shiftDownPaddle.position.set(-0.16, 1.06, -0.58);
+const shiftUpPaddle = new THREE.Mesh(paddleTapGeo, paddleTapMat); shiftUpPaddle.position.set(0.16, 1.06, -0.58);
+f1Controls.add(throttlePaddleF1.pivot, brakePaddleF1.pivot, shiftDownPaddle, shiftUpPaddle);
+
+carRig.add(coupeControls, f1Controls);
+
+// ---------- H-pattern shifter (coupe only) ----------
+const shifterBase = new THREE.Vector3(0.32, 0.55, -0.15);
+const gateSlots = {
+  N:  new THREE.Vector3(0,     0.16, 0),
+  R1: new THREE.Vector3(-0.09, 0.10, -0.05), R2: new THREE.Vector3(-0.09, 0.22,  0.05),
+  R3: new THREE.Vector3( 0,    0.10, -0.05), R4: new THREE.Vector3( 0,    0.22,  0.05),
+  R5: new THREE.Vector3( 0.09, 0.10, -0.05), R6: new THREE.Vector3( 0.09, 0.22,  0.05),
+  REV: new THREE.Vector3(-0.09, 0.30,  0.05)
+};
+const gearOfSlot = { N: 0, R1: 1, R2: 2, R3: 3, R4: 4, R5: 5, R6: 6, REV: -1 };
+const shifterStalk = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.22, 8), new THREE.MeshStandardMaterial({ color: 0x333333 }));
+const shifterKnob = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 12), new THREE.MeshStandardMaterial({ color: 0x8d0801 }));
+const shifterGroup = new THREE.Group();
+shifterGroup.position.copy(shifterBase);
+shifterStalk.position.copy(gateSlots.N).multiplyScalar(0.5);
+shifterKnob.position.copy(gateSlots.N);
+shifterGroup.add(shifterStalk, shifterKnob);
+carRig.add(shifterGroup);
+
+// ---------- Handbrake (ratchet lever) ----------
+const handbrakePivotPos = new THREE.Vector3(0.42, 0.5, 0.05);
+const handbrakePivot = new THREE.Group();
+handbrakePivot.position.copy(handbrakePivotPos);
+const hbLever = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.22, 8), new THREE.MeshStandardMaterial({ color: 0x444444 }));
+hbLever.position.y = 0.11;
+const hbKnob = new THREE.Mesh(new THREE.SphereGeometry(0.025, 10, 10), new THREE.MeshStandardMaterial({ color: 0x000000 }));
+hbKnob.position.y = 0.22;
+handbrakePivot.add(hbLever, hbKnob);
+handbrakePivot.rotation.z = -0.05;
+carRig.add(handbrakePivot);
+
+// ---------- Gauge cluster (analog speedo + tach, behind the wheel) ----------
+const gaugeCanvas = document.createElement('canvas');
+gaugeCanvas.width = 640; gaugeCanvas.height = 240;
+const gaugeCtx = gaugeCanvas.getContext('2d');
+const gaugeTex = new THREE.CanvasTexture(gaugeCanvas);
+const gaugePanel = new THREE.Mesh(new THREE.PlaneGeometry(0.58, 0.22), new THREE.MeshBasicMaterial({ map: gaugeTex, transparent: true }));
+gaugePanel.position.set(0, 1.14, -0.76);
+gaugePanel.rotation.x = -0.35;
+carRig.add(gaugePanel);
+const hudDiv = document.getElementById('hud');
+
+function drawGaugeArc(ctx, cx, cy, r, value01, color, thickness = 10) {
+  const start = Math.PI * 0.75, end = Math.PI * 2.25;
+  const angle = start + (end - start) * THREE.MathUtils.clamp(value01, 0, 1);
+  ctx.beginPath(); ctx.strokeStyle = '#2a2d33'; ctx.lineWidth = thickness; ctx.lineCap = 'round';
+  ctx.arc(cx, cy, r, start, end); ctx.stroke();
+  ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = thickness; ctx.lineCap = 'round';
+  ctx.arc(cx, cy, r, start, angle); ctx.stroke();
+  ctx.save(); ctx.translate(cx, cy); ctx.rotate(angle + Math.PI / 2);
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, 8); ctx.lineTo(0, -r + 16); ctx.stroke();
+  ctx.restore();
+}
+function drawGauges(state) {
+  const ctx = gaugeCtx;
+  ctx.clearRect(0, 0, 640, 240);
+  ctx.fillStyle = 'rgba(8,9,11,0.9)'; ctx.fillRect(0, 0, 640, 240);
+  // Tach (left)
+  drawGaugeArc(ctx, 160, 130, 95, state.rpm / state.redlineRpm, state.rpm / state.redlineRpm > 0.9 ? '#ff3b30' : '#ffaa00');
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 22px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(Math.round(state.rpm), 160, 132);
+  ctx.font = '13px monospace'; ctx.fillStyle = '#999'; ctx.fillText('RPM', 160, 155);
+  // Speedo (right)
+  drawGaugeArc(ctx, 480, 130, 95, state.speedKmh / state.topSpeedKmh, '#2a9d8f');
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 30px monospace';
+  ctx.fillText(Math.round(state.speedKmh), 480, 132);
+  ctx.font = '13px monospace'; ctx.fillStyle = '#999'; ctx.fillText('km/h', 480, 155);
+  // Center gear + indicators
+  ctx.font = 'bold 46px monospace'; ctx.fillStyle = '#fff';
+  ctx.fillText(state.gear === -1 ? 'R' : state.gear === 0 ? 'N' : String(state.gear), 320, 145);
+  ctx.font = '13px monospace'; ctx.textAlign = 'left';
+  ctx.fillStyle = state.handbrake ? '#ff4040' : '#444'; ctx.fillText('HANDBRAKE', 250, 200);
+  if (state.hasClutch) { ctx.fillStyle = state.clutchIn ? '#40a0ff' : '#444'; ctx.fillText('CLUTCH', 400, 200); }
+  ctx.textAlign = 'center'; ctx.font = '12px monospace'; ctx.fillStyle = '#777';
+  ctx.fillText(state.carName, 320, 25);
+  gaugeTex.needsUpdate = true;
+  hudDiv.textContent = `${state.carName} | ${Math.round(state.speedKmh)} km/h | gear ${state.gear === -1 ? 'R' : state.gear} | rpm ${Math.round(state.rpm)}`;
+}
+
+// ---------- Infotainment (center console) + Spotify ----------
+const infoCanvas = document.createElement('canvas');
+infoCanvas.width = 480; infoCanvas.height = 300;
+const infoCtx = infoCanvas.getContext('2d');
+const infoTex = new THREE.CanvasTexture(infoCanvas);
+const infotainmentPanel = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.16), new THREE.MeshBasicMaterial({ map: infoTex }));
+infotainmentPanel.position.set(0.28, 0.98, -0.32);
+infotainmentPanel.rotation.x = -0.5;
+carRig.add(infotainmentPanel);
+
+// Physical tap buttons under the console screen: prev / play-pause / next
+function makeTapButton(color, pos) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.015, 16), new THREE.MeshStandardMaterial({ color }));
+  m.rotation.x = Math.PI / 2;
+  m.position.copy(pos);
+  m.userData.wasNear = false;
+  carRig.add(m);
+  return m;
+}
+const btnPrev = makeTapButton(0xcccccc, new THREE.Vector3(0.20, 0.90, -0.32));
+const btnPlay = makeTapButton(0x1DB954, new THREE.Vector3(0.28, 0.90, -0.32));
+const btnNext = makeTapButton(0xcccccc, new THREE.Vector3(0.36, 0.90, -0.32));
+
+function tapDetect(mesh, radius = 0.035) {
+  let triggered = false, near = false;
+  ['left', 'right'].forEach(side => {
+    const h = xrHands[side];
+    if (!h) return;
+    if (h.indexTip.distanceTo(mesh.position) < radius) near = true;
+  });
+  if (near && !mesh.userData.wasNear) triggered = true;
+  mesh.userData.wasNear = near;
+  return triggered;
+}
+
+// ---------- Door panel (driver's left): redundant volume slider + skip buttons ----------
+const doorPanelGroup = new THREE.Group();
+doorPanelGroup.position.set(-0.62, 0.85, 0.30);
+const doorPlate = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.22, 0.02), new THREE.MeshStandardMaterial({ color: 0x2b2d31 }));
+doorPanelGroup.add(doorPlate);
+const volTrack = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.14, 0.015), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+volTrack.position.set(0, 0, 0.02);
+doorPanelGroup.add(volTrack);
+const volKnob = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.02, 0.025), new THREE.MeshStandardMaterial({ color: 0x1DB954 }));
+volKnob.position.set(0, 0, 0.03);
+doorPanelGroup.add(volKnob);
+const doorPrevBtn = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.015, 12), new THREE.MeshStandardMaterial({ color: 0xcccccc }));
+doorPrevBtn.rotation.x = Math.PI / 2; doorPrevBtn.position.set(-0.05, -0.09, 0.02);
+doorPanelGroup.add(doorPrevBtn);
+const doorNextBtn = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.015, 12), new THREE.MeshStandardMaterial({ color: 0xcccccc }));
+doorNextBtn.rotation.x = Math.PI / 2; doorNextBtn.position.set(0.05, -0.09, 0.02);
+doorPanelGroup.add(doorNextBtn);
+doorPrevBtn.userData.wasNear = false; doorNextBtn.userData.wasNear = false;
+carRig.add(doorPanelGroup);
+
+let volumeLevel = 0.6; // 0..1
+let volSliderGrabbed = null;
+const volMin = -0.06, volMax = 0.06;
+volKnob.position.y = THREE.MathUtils.lerp(volMin, volMax, volumeLevel);
+
+// ==========================================================================
+// SPOTIFY — Authorization Code + PKCE (client-side only, no server needed)
+// ==========================================================================
+const spotify = { accessToken: null, refreshToken: null, expiresAt: 0, nowPlaying: null, albumImg: null, lastArtUrl: null, pollTimer: null };
+
+function b64url(buffer) {
+  let str = '';
+  new Uint8Array(buffer).forEach(b => str += String.fromCharCode(b));
+  return btoa(str).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function randomString(len) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let s = ''; for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  return s;
+}
+async function sha256b64url(str) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return b64url(digest);
+}
+
+async function spotifyLogin() {
+  if (!SPOTIFY_CLIENT_ID) { alert('Add your Spotify app Client ID to SPOTIFY_CLIENT_ID near the top of the script first.'); return; }
+  const verifier = randomString(64);
+  sessionStorage.setItem('sp_verifier', verifier);
+  const challenge = await sha256b64url(verifier);
+  const state = randomString(16);
+  sessionStorage.setItem('sp_state', state);
+  const params = new URLSearchParams({
+    response_type: 'code', client_id: SPOTIFY_CLIENT_ID, scope: SPOTIFY_SCOPES,
+    redirect_uri: SPOTIFY_REDIRECT_URI, code_challenge_method: 'S256', code_challenge: challenge, state
+  });
+  location.href = 'https://accounts.spotify.com/authorize?' + params.toString();
+}
+
+async function exchangeCodeForToken(code) {
+  const verifier = sessionStorage.getItem('sp_verifier');
+  const body = new URLSearchParams({
+    grant_type: 'authorization_code', code, redirect_uri: SPOTIFY_REDIRECT_URI,
+    client_id: SPOTIFY_CLIENT_ID, code_verifier: verifier
+  });
+  const res = await fetch('https://accounts.spotify.com/api/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  const json = await res.json();
+  if (json.access_token) applyToken(json);
+}
+async function refreshSpotifyToken() {
+  if (!spotify.refreshToken) return;
+  const body = new URLSearchParams({ grant_type: 'refresh_token', refresh_token: spotify.refreshToken, client_id: SPOTIFY_CLIENT_ID });
+  const res = await fetch('https://accounts.spotify.com/api/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body });
+  const json = await res.json();
+  if (json.access_token) applyToken(json);
+}
+function applyToken(json) {
+  spotify.accessToken = json.access_token;
+  if (json.refresh_token) { spotify.refreshToken = json.refresh_token; sessionStorage.setItem('sp_refresh', json.refresh_token); }
+  spotify.expiresAt = Date.now() + (json.expires_in || 3600) * 1000;
+  setSpotifyUI(true);
+  startSpotifyPolling();
+}
+
+async function handleSpotifyRedirect() {
+  const params = new URLSearchParams(location.search);
+  const code = params.get('code'), state = params.get('state');
+  if (!code) {
+    const savedRefresh = sessionStorage.getItem('sp_refresh');
+    if (savedRefresh) { spotify.refreshToken = savedRefresh; await refreshSpotifyToken(); }
+    return;
+  }
+  history.replaceState({}, '', location.pathname);
+  if (state !== sessionStorage.getItem('sp_state')) { console.warn('Spotify state mismatch'); return; }
+  await exchangeCodeForToken(code);
+}
+
+function startSpotifyPolling() {
+  if (spotify.pollTimer) clearInterval(spotify.pollTimer);
+  fetchNowPlaying();
+  spotify.pollTimer = setInterval(fetchNowPlaying, 4000);
+}
+async function fetchNowPlaying() {
+  if (!spotify.accessToken) return;
+  if (Date.now() > spotify.expiresAt - 5000) await refreshSpotifyToken();
+  try {
+    const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', { headers: { Authorization: 'Bearer ' + spotify.accessToken } });
+    if (res.status === 204) { spotify.nowPlaying = null; return; }
+    const json = await res.json();
+    if (json && json.item) {
+      spotify.nowPlaying = {
+        name: json.item.name, artist: json.item.artists.map(a => a.name).join(', '),
+        albumArt: json.item.album.images[0] && json.item.album.images[0].url,
+        isPlaying: json.is_playing, progressMs: json.progress_ms, durationMs: json.item.duration_ms
+      };
+      loadAlbumArt(spotify.nowPlaying.albumArt);
+    }
+  } catch (e) { console.warn('Spotify fetch failed', e); }
+}
+function loadAlbumArt(url) {
+  if (!url || url === spotify.lastArtUrl) return;
+  spotify.lastArtUrl = url;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => { spotify.albumImg = img; };
+  img.src = url;
+}
+async function spotifyControl(action) {
+  if (!spotify.accessToken) return;
+  const map = { play: ['PUT', 'play'], pause: ['PUT', 'pause'], next: ['POST', 'next'], previous: ['POST', 'previous'] };
+  const [method, path] = map[action];
+  try { await fetch('https://api.spotify.com/v1/me/player/' + path, { method, headers: { Authorization: 'Bearer ' + spotify.accessToken } }); }
+  catch (e) { console.warn(e); }
+  setTimeout(fetchNowPlaying, 400);
+}
+function spotifyTogglePlay() { spotifyControl(spotify.nowPlaying && spotify.nowPlaying.isPlaying ? 'pause' : 'play'); }
+let lastVolumeSentAt = 0;
+function spotifySetVolume(percent) {
+  if (!spotify.accessToken) return;
+  const now = performance.now();
+  if (now - lastVolumeSentAt < 400) return; // throttle API calls
+  lastVolumeSentAt = now;
+  fetch('https://api.spotify.com/v1/me/player/volume?volume_percent=' + Math.round(percent), { method: 'PUT', headers: { Authorization: 'Bearer ' + spotify.accessToken } }).catch(() => {});
+}
+
+function setSpotifyUI(connected) {
+  const btn = document.getElementById('spotifyBtn');
+  const status = document.getElementById('spotifyStatus');
+  if (connected) { btn.textContent = 'Spotify Connected'; btn.classList.add('connected'); status.textContent = ''; }
+  else { btn.textContent = 'Connect Spotify'; btn.classList.remove('connected'); }
+}
+document.getElementById('spotifyBtn').addEventListener('click', () => { if (!spotify.accessToken) spotifyLogin(); });
+
+function drawInfotainment() {
+  const ctx = infoCtx;
+  ctx.clearRect(0, 0, 480, 300);
+  ctx.fillStyle = '#0e0f12'; ctx.fillRect(0, 0, 480, 300);
+  ctx.strokeStyle = '#1DB954'; ctx.lineWidth = 3; ctx.strokeRect(4, 4, 472, 292);
+  if (!spotify.accessToken) {
+    ctx.fillStyle = '#888'; ctx.font = '20px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Spotify not connected', 240, 140);
+    ctx.font = '14px sans-serif'; ctx.fillText('Use the overlay button before entering VR', 240, 170);
+    infoTex.needsUpdate = true; return;
+  }
+  const np = spotify.nowPlaying;
+  if (spotify.albumImg) ctx.drawImage(spotify.albumImg, 40, 30, 140, 140);
+  else { ctx.fillStyle = '#222'; ctx.fillRect(40, 30, 140, 140); }
+  ctx.textAlign = 'left'; ctx.fillStyle = '#fff';
+  ctx.font = 'bold 24px sans-serif';
+  ctx.fillText(np ? np.name : 'Nothing playing', 200, 70);
+  ctx.font = '18px sans-serif'; ctx.fillStyle = '#aaa';
+  ctx.fillText(np ? np.artist : '-', 200, 100);
+  if (np) {
+    const frac = THREE.MathUtils.clamp(np.progressMs / np.durationMs, 0, 1);
+    ctx.fillStyle = '#333'; ctx.fillRect(40, 200, 400, 6);
+    ctx.fillStyle = '#1DB954'; ctx.fillRect(40, 200, 400 * frac, 6);
+    ctx.fillStyle = '#fff'; ctx.font = '42px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(np.isPlaying ? '\u23F8' : '\u25B6', 240, 260);
+  }
+  ctx.font = '13px sans-serif'; ctx.fillStyle = '#666'; ctx.textAlign = 'center';
+  ctx.fillText('prev  \u2022  play/pause  \u2022  next   (buttons below screen)', 240, 285);
+  infoTex.needsUpdate = true;
+}
+
+// ==========================================================================
+// CAR MODEL / PHYSICS
+// ==========================================================================
+const CARS = {
+  coupe: {
+    name: '6-Speed Coupe', ratios: [3.6, 2.2, 1.6, 1.2, 0.95, 0.78], finalDrive: 3.9, reverseRatio: 3.2,
+    wheelRadius: 0.32, idleRpm: 900, redlineRpm: 6800, topSpeedKmh: 240, peakTorque: 320, mass: 1400,
+    dragCoeff: 0.45, maxSteerDeg: 32, hasClutchAndShifter: true, gripBase: 1.0, visual: coupeVisual
+  },
+  f1: {
+    name: 'F1 Car', ratios: [3.2, 2.6, 2.1, 1.75, 1.45, 1.2, 1.0, 0.85], finalDrive: 3.2, reverseRatio: 2.8,
+    wheelRadius: 0.33, idleRpm: 4000, redlineRpm: 13000, topSpeedKmh: 350, peakTorque: 420, mass: 800,
+    dragCoeff: 0.9, maxSteerDeg: 26, hasClutchAndShifter: false, gripBase: 1.4, visual: f1Visual
+  }
+};
+
+let selectedCarKey = 'coupe';
+const carState = {
+  car: CARS.coupe, speed: 0, yaw: 0, gear: 0, rpm: 900, clutchIn: false, handbrakeOn: false,
+  wheelAngle: 0, shifterSlot: 'N', pos: startPos.clone(), paddleShiftLockUntil: 0
+};
+carState.yaw = Math.atan2(startTangent.x, startTangent.z);
+
+function resetCarPosition() {
+  carState.pos.copy(startPos);
+  carState.yaw = Math.atan2(startTangent.x, startTangent.z);
+  carState.speed = 0; carState.gear = 0; carState.shifterSlot = 'N';
+}
+function switchCar(key) {
+  selectedCarKey = key;
+  carState.car = CARS[key];
+  coupeVisual.group.visible = (key === 'coupe');
+  f1Visual.group.visible = (key === 'f1');
+  coupeControls.visible = (key === 'coupe');
+  f1Controls.visible = (key === 'f1');
+  shifterGroup.visible = (key === 'coupe');
+  carState.gear = 0; carState.shifterSlot = 'N'; carState.rpm = carState.car.idleRpm;
+  resetCarPosition();
+}
+
+function torqueAt(rpm, car) {
+  const t = THREE.MathUtils.clamp((rpm - car.idleRpm) / (car.redlineRpm - car.idleRpm), 0, 1);
+  const shape = 1 - Math.pow((t - 0.65) / 0.65, 2) * 0.9;
+  return car.peakTorque * Math.max(shape, 0.15);
+}
+function currentRatio(car, gear) {
+  if (gear === -1) return -car.reverseRatio;
+  if (gear === 0) return 0;
+  return car.ratios[gear - 1];
+}
+
+function stepPhysics(dt, input) {
+  const car = carState.car;
+  const ratio = currentRatio(car, carState.gear);
+  const driveConnected = car.hasClutchAndShifter ? (!input.clutchIn && carState.gear !== 0) : (carState.gear !== 0);
+
+  if (driveConnected) {
+    const wheelAngVel = carState.speed / car.wheelRadius;
+    const targetRpm = Math.abs(wheelAngVel * ratio * car.finalDrive) * (60 / (2 * Math.PI));
+    carState.rpm = THREE.MathUtils.clamp(THREE.MathUtils.lerp(carState.rpm, Math.max(targetRpm, car.idleRpm), Math.min(1, dt * 8)), car.idleRpm, car.redlineRpm);
+  } else {
+    const targetRpm = car.idleRpm + input.throttle * (car.redlineRpm - car.idleRpm) * 0.9;
+    carState.rpm = THREE.MathUtils.lerp(carState.rpm, targetRpm, Math.min(1, dt * 4));
+  }
+
+  const g = groundSample(carState.pos.x, carState.pos.z);
+  const forward = new THREE.Vector3(Math.sin(carState.yaw), 0, Math.cos(carState.yaw));
+  const slopeForceMag = 9.81 * (-g.normal.x * forward.x - g.normal.z * forward.z) * 3.0;
+
+  let engineForce = 0;
+  if (driveConnected && ratio !== 0) {
+    const torque = torqueAt(carState.rpm, car) * input.throttle;
+    const wheelTorque = torque * ratio * car.finalDrive * 0.9;
+    engineForce = wheelTorque / car.wheelRadius;
+    if (ratio < 0) engineForce = -Math.abs(engineForce) * (input.throttle > 0 ? 1 : 0);
+  }
+
+  const brakeForce = input.brake * 9000;
+  const handbrakeGripLoss = carState.handbrakeOn ? 0.35 : 1.0;
+  const rollResist = 220;
+  const dragForce = car.dragCoeff * carState.speed * Math.abs(carState.speed) * 0.6;
+
+  let netForce = engineForce - dragForce - rollResist * Math.sign(carState.speed) - slopeForceMag * car.mass * 0.02;
+  if (carState.speed > 0) netForce -= brakeForce; else if (carState.speed < 0) netForce += brakeForce;
+  if (carState.handbrakeOn) netForce -= Math.sign(carState.speed) * 4000;
+
+  const accel = netForce / car.mass;
+  carState.speed += accel * dt;
+  if (Math.abs(carState.speed) < 0.03 && input.throttle < 0.02) carState.speed = 0;
+
+  const steerAngle = carState.wheelAngle * (car.maxSteerDeg * Math.PI / 180) / (Math.PI * 0.7);
+  const wheelbase = 2.6;
+  const grip = car.gripBase * handbrakeGripLoss;
+  const yawRate = (carState.speed / wheelbase) * Math.tan(steerAngle) * grip;
+  carState.yaw += yawRate * dt;
+
+  const fwd = new THREE.Vector3(Math.sin(carState.yaw), 0, Math.cos(carState.yaw));
+  carState.pos.addScaledVector(fwd, carState.speed * dt);
+
+  const gs = groundSample(carState.pos.x, carState.pos.z);
+  carRig.position.set(carState.pos.x, gs.y, carState.pos.z);
+  carRig.rotation.set(0, carState.yaw, 0);
+
+  const spin = (carState.speed / car.wheelRadius) * dt;
+  car.visual.wheels.forEach(w => w.rotation.x += spin);
+
+  return {
+    speedKmh: carState.speed * 3.6, gear: carState.gear, rpm: carState.rpm, redlineRpm: car.redlineRpm,
+    topSpeedKmh: car.topSpeedKmh, handbrake: carState.handbrakeOn, clutchIn: input.clutchIn,
+    hasClutch: car.hasClutchAndShifter, carName: car.name
+  };
+}
+
+// ==========================================================================
+// INPUT
+// ==========================================================================
+const input = { throttle: 0, brake: 0, clutchIn: false };
+
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key >= '1' && e.key <= '6' && carState.car.hasClutchAndShifter) { carState.gear = parseInt(e.key); carState.shifterSlot = 'R' + e.key; }
+  if (e.key.toLowerCase() === 'r') { carState.gear = carState.gear === -1 ? 0 : -1; carState.shifterSlot = carState.gear === -1 ? 'REV' : 'N'; }
+  if (e.key.toLowerCase() === 'q' && !carState.car.hasClutchAndShifter) paddleShift(-1);
+  if (e.key.toLowerCase() === 'e' && !carState.car.hasClutchAndShifter) paddleShift(1);
+  if (e.key.toLowerCase() === 'p') spotifyTogglePlay();
+  if (e.key === '[') spotifyControl('previous');
+  if (e.key === ']') spotifyControl('next');
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+function paddleShift(dir) {
+  const now = performance.now();
+  if (now < carState.paddleShiftLockUntil) return;
+  carState.paddleShiftLockUntil = now + 150;
+  const maxGear = carState.car.ratios.length;
+  carState.gear = THREE.MathUtils.clamp(carState.gear + dir, dir < 0 && carState.gear <= 1 ? -1 : 1, maxGear);
+  if (carState.gear === 0) carState.gear = 1;
+}
+
+function desktopInputUpdate() {
+  input.throttle = keys['w'] ? 1 : 0;
+  input.brake = keys['s'] ? 1 : 0;
+  input.clutchIn = !!keys['c'];
+  if (keys[' ']) carState.handbrakeOn = true;
+  if (keys['x']) carState.handbrakeOn = false;
+  const steerInput = (keys['a'] ? -1 : 0) + (keys['d'] ? 1 : 0);
+  carState.wheelAngle = THREE.MathUtils.lerp(carState.wheelAngle, steerInput * 1.4, 0.12);
+  wheelGroup.rotation.z = -carState.wheelAngle;
+}
+
+// ---- WebXR hand tracking ----
+let xrHands = { left: null, right: null };
+const grab = { wheelHand: null, wheelStartAngle: 0, wheelStartHandAngle: 0, shifter: null, handbrake: null };
+
+function jointLocal(frame, refSpace, xrHand, name) {
+  const joint = xrHand.get(name);
+  if (!joint) return null;
+  const pose = frame.getJointPose ? frame.getJointPose(joint, refSpace) : null;
+  if (!pose) return null;
+  return new THREE.Vector3(pose.transform.position.x, pose.transform.position.y, pose.transform.position.z);
+}
+
+function updateHandTracking(frame) {
+  const session = renderer.xr.getSession();
+  if (!session) return;
+  const refSpace = renderer.xr.getReferenceSpace();
+  const hands = { left: null, right: null };
+  for (const source of session.inputSources) {
+    if (!source.hand) continue;
+    const handedness = source.handedness;
+    const thumb = jointLocal(frame, refSpace, source.hand, 'thumb-tip');
+    const index = jointLocal(frame, refSpace, source.hand, 'index-finger-tip');
+    if (!thumb || !index) continue;
+    const pinchDist = thumb.distanceTo(index);
+    hands[handedness] = { pinching: pinchDist < 0.028, pinchPos: thumb.clone().add(index).multiplyScalar(0.5), indexTip: index };
+  }
+  xrHands = hands;
+
+  // Steering wheel
+  const wheelCenter = wheelGroup.position;
+  ['left', 'right'].forEach(side => {
+    const h = xrHands[side];
+    if (!h) { if (grab.wheelHand === side) grab.wheelHand = null; return; }
+    const distToWheel = h.pinchPos.distanceTo(wheelCenter);
+    if (h.pinching && distToWheel < 0.28 && grab.wheelHand === null) {
+      grab.wheelHand = side;
+      grab.wheelStartHandAngle = Math.atan2(h.pinchPos.x - wheelCenter.x, h.pinchPos.y - wheelCenter.y);
+      grab.wheelStartAngle = carState.wheelAngle;
+    }
+    if (!h.pinching && grab.wheelHand === side) grab.wheelHand = null;
+  });
+  if (grab.wheelHand && xrHands[grab.wheelHand]) {
+    const h = xrHands[grab.wheelHand];
+    const angleNow = Math.atan2(h.pinchPos.x - wheelCenter.x, h.pinchPos.y - wheelCenter.y);
+    const delta = angleNow - grab.wheelStartHandAngle;
+    carState.wheelAngle = THREE.MathUtils.clamp(grab.wheelStartAngle + delta, -2.1, 2.1);
+  }
+  wheelGroup.rotation.z = -carState.wheelAngle;
+
+  // Gas / brake / clutch paddles
+  if (carState.car.hasClutchAndShifter) {
+    input.throttle = updatePullPaddle(throttlePaddleCoupe);
+    input.brake = updatePullPaddle(brakePaddleCoupe);
+    input.clutchIn = updatePullPaddle(clutchPaddleCoupe) > 0.5;
+  } else {
+    input.throttle = updatePullPaddle(throttlePaddleF1);
+    input.brake = updatePullPaddle(brakePaddleF1);
+    input.clutchIn = false;
+    if (tapDetect(shiftUpPaddle, 0.05)) paddleShift(1);
+    if (tapDetect(shiftDownPaddle, 0.05)) paddleShift(-1);
+  }
+
+  // H-pattern shifter
+  if (carState.car.hasClutchAndShifter) {
+    ['left', 'right'].forEach(side => {
+      const h = xrHands[side];
+      if (!h) { if (grab.shifter === side) grab.shifter = null; return; }
+      const d = h.pinchPos.distanceTo(shifterGroup.position.clone().add(shifterKnob.position));
+      if (h.pinching && d < 0.09 && grab.shifter === null) grab.shifter = side;
+      if (!h.pinching && grab.shifter === side) {
+        let best = 'N', bestD = Infinity;
+        for (const k in gateSlots) { const dd = shifterKnob.position.distanceTo(gateSlots[k]); if (dd < bestD) { bestD = dd; best = k; } }
+        carState.shifterSlot = best;
+        shifterKnob.position.copy(gateSlots[best]);
+        grab.shifter = null;
+      }
+    });
+    if (grab.shifter && xrHands[grab.shifter]) {
+      const h = xrHands[grab.shifter];
+      const localPos = h.pinchPos.clone().sub(shifterGroup.position);
+      localPos.x = THREE.MathUtils.clamp(localPos.x, -0.1, 0.1);
+      localPos.y = THREE.MathUtils.clamp(localPos.y, 0.08, 0.32);
+      localPos.z = THREE.MathUtils.clamp(localPos.z, -0.06, 0.06);
+      shifterKnob.position.copy(localPos);
+      shifterStalk.position.copy(localPos).multiplyScalar(0.5);
+    }
+    carState.gear = gearOfSlot[carState.shifterSlot] ?? 0;
+  }
+
+  // Handbrake
+  ['left', 'right'].forEach(side => {
+    const h = xrHands[side];
+    if (!h) { if (grab.handbrake === side) grab.handbrake = null; return; }
+    const knobWorldPos = handbrakePivot.position.clone().add(hbKnob.position.clone().applyAxisAngle(new THREE.Vector3(1, 0, 0), handbrakePivot.rotation.x));
+    const d = h.pinchPos.distanceTo(knobWorldPos);
+    if (h.pinching && d < 0.1 && grab.handbrake === null) grab.handbrake = side;
+    if (!h.pinching && grab.handbrake === side) grab.handbrake = null;
+  });
+  if (grab.handbrake && xrHands[grab.handbrake]) {
+    const h = xrHands[grab.handbrake];
+    const rel = h.pinchPos.clone().sub(handbrakePivot.position);
+    const angle = Math.atan2(rel.z, rel.y);
+    handbrakePivot.rotation.x = THREE.MathUtils.clamp(-angle, -0.05, 1.1);
+    carState.handbrakeOn = handbrakePivot.rotation.x > 0.55;
+  }
+
+  // Infotainment buttons
+  if (tapDetect(btnPlay)) spotifyTogglePlay();
+  if (tapDetect(btnPrev)) spotifyControl('previous');
+  if (tapDetect(btnNext)) spotifyControl('next');
+
+  // Door panel: volume slider (grab + drag) and redundant skip buttons
+  const volKnobWorld = doorPanelGroup.position.clone().add(volKnob.position);
+  ['left', 'right'].forEach(side => {
+    const h = xrHands[side];
+    if (!h) { if (volSliderGrabbed === side) volSliderGrabbed = null; return; }
+    if (h.pinching && h.pinchPos.distanceTo(volKnobWorld) < 0.04 && volSliderGrabbed === null) volSliderGrabbed = side;
+    if (!h.pinching && volSliderGrabbed === side) volSliderGrabbed = null;
+  });
+  if (volSliderGrabbed && xrHands[volSliderGrabbed]) {
+    const h = xrHands[volSliderGrabbed];
+    const localY = h.pinchPos.y - doorPanelGroup.position.y;
+    volKnob.position.y = THREE.MathUtils.clamp(localY, volMin, volMax);
+    volumeLevel = (volKnob.position.y - volMin) / (volMax - volMin);
+    spotifySetVolume(volumeLevel * 100);
+  }
+  const doorPrevWorld = doorPanelGroup.position.clone().add(doorPrevBtn.position);
+  const doorNextWorld = doorPanelGroup.position.clone().add(doorNextBtn.position);
+  if (tapDetectWorld(doorPrevBtn, doorPrevWorld)) spotifyControl('previous');
+  if (tapDetectWorld(doorNextBtn, doorNextWorld)) spotifyControl('next');
+}
+
+function tapDetectWorld(mesh, worldPos, radius = 0.035) {
+  let near = false;
+  ['left', 'right'].forEach(side => { const h = xrHands[side]; if (h && h.indexTip.distanceTo(worldPos) < radius) near = true; });
+  const triggered = near && !mesh.userData.wasNear;
+  mesh.userData.wasNear = near;
+  return triggered;
+}
+
+// ==========================================================================
+// MAIN LOOP
+// ==========================================================================
+const clock = new THREE.Clock();
+let frameCount = 0;
+function animate(time, frame) {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  frameCount++;
+
+  if (frame && renderer.xr.isPresenting) updateHandTracking(frame);
+  else desktopInputUpdate();
+
+  const info = stepPhysics(dt, input);
+  drawGauges(info);
+  if (frameCount % 6 === 0) drawInfotainment();
+
+  if (!renderer.xr.isPresenting) {
+    const behind = new THREE.Vector3(Math.sin(carState.yaw), 0, Math.cos(carState.yaw)).multiplyScalar(-7);
+    const desired = new THREE.Vector3(carState.pos.x, 0, carState.pos.z).add(behind);
+    desired.y = carRig.position.y + 3.2;
+    camera.position.lerp(desired.sub(carRig.position), 0.08);
+    // camera is a child of carRig, and Object3D.lookAt() expects a WORLD-space
+    // target — so we must aim at the car's actual world position, not a fixed
+    // point at the scene origin (which is what this looked like before a fix).
+    const lookWorld = new THREE.Vector3(carRig.position.x, carRig.position.y + 0.8, carRig.position.z);
+    camera.lookAt(lookWorld);
+  } else {
+    camera.position.set(0, 0, 0);
+  }
+
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(animate);
+
+// ==========================================================================
+// UI wiring
+// ==========================================================================
+document.getElementById('pickCoupe').addEventListener('click', () => {
+  switchCar('coupe');
+  document.getElementById('pickCoupe').classList.add('active');
+  document.getElementById('pickF1').classList.remove('active');
+});
+document.getElementById('pickF1').addEventListener('click', () => {
+  switchCar('f1');
+  document.getElementById('pickF1').classList.add('active');
+  document.getElementById('pickCoupe').classList.remove('active');
+});
+
+const enterBtn = document.getElementById('enterVR');
+const vrErrorBox = document.getElementById('vrError');
+
+function showVrError(msg) {
+  vrErrorBox.textContent = msg;
+  vrErrorBox.style.display = 'block';
+}
+function clearVrError() {
+  vrErrorBox.style.display = 'none';
+  vrErrorBox.textContent = '';
+}
+
+// WebXR requires a secure context (HTTPS, or http://localhost / http://127.0.0.1
+// for local testing). If this page is opened over plain HTTP on any other host,
+// navigator.xr will simply be undefined and you'll get a confusing error later —
+// so we check for that specific case up front and say so plainly.
+if (!window.isSecureContext) {
+  enterBtn.textContent = 'Not a secure context';
+  enterBtn.disabled = true;
+  showVrError(
+    'This page must be served over HTTPS for WebXR to work.\n' +
+    'Current URL: ' + location.href + '\n' +
+    'Host it on any HTTPS static host (GitHub Pages, Netlify, Vercel, Cloudflare Pages, etc.) ' +
+    'and open that HTTPS URL in the Quest Browser.'
+  );
+} else if (!navigator.xr) {
+  enterBtn.textContent = 'WebXR not available in this browser';
+  enterBtn.disabled = true;
+  showVrError(
+    'navigator.xr is undefined. On Quest, open this page in the built-in Meta Quest Browser ' +
+    '(not a different in-headset browser), and make sure it is not running inside an iframe ' +
+    'that lacks the "xr-spatial-tracking" permission.'
+  );
+} else {
+  navigator.xr.isSessionSupported('immersive-vr').then(supported => {
+    if (!supported) {
+      enterBtn.textContent = 'VR not supported here';
+      enterBtn.disabled = true;
+      showVrError('This browser/device reports no support for "immersive-vr" sessions.');
+    }
+  }).catch(err => {
+    enterBtn.textContent = 'VR support check failed';
+    showVrError('isSessionSupported() threw: ' + err.name + ': ' + err.message);
+  });
+}
+
+// Try progressively less-demanding session requests. Some Quest configurations
+// (Guardian/boundary not set up, hand tracking disabled in system settings,
+// browser permission not yet granted) reject a session that asks for features
+// they can't currently satisfy — even as "optionalFeatures" some builds are
+// stricter than others. Falling back gives you a working session with fewer
+// features instead of a hard failure with no explanation.
+const SESSION_ATTEMPTS = [
+  { optionalFeatures: ['hand-tracking', 'local-floor', 'bounded-floor'] },
+  { optionalFeatures: ['hand-tracking', 'local-floor'] },
+  { optionalFeatures: ['local-floor'] },
+  {} // bare session, viewer reference space only
+];
+
+async function requestSessionWithFallback() {
+  let lastErr = null;
+  for (const opts of SESSION_ATTEMPTS) {
+    try {
+      const session = await navigator.xr.requestSession('immersive-vr', opts);
+      return session;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+
+async function setReferenceSpaceWithFallback() {
+  for (const type of ['local-floor', 'local', 'viewer']) {
+    try {
+      renderer.xr.setReferenceSpaceType(type);
+      return type;
+    } catch (err) { /* try next */ }
+  }
+  return null;
+}
+
+enterBtn.addEventListener('click', async () => {
+  clearVrError();
+  enterBtn.disabled = true;
+  enterBtn.textContent = 'Starting…';
+  try {
+    await setReferenceSpaceWithFallback();
+    const session = await requestSessionWithFallback();
+    await renderer.xr.setSession(session);
+    document.getElementById('overlay').style.display = 'none';
+    session.addEventListener('end', () => {
+      document.getElementById('overlay').style.display = '';
+      enterBtn.disabled = false;
+      enterBtn.textContent = 'Enter VR';
+    });
+  } catch (err) {
+    enterBtn.disabled = false;
+    enterBtn.textContent = 'Enter VR';
+    showVrError(
+      'Could not start VR session.\n' +
+      'Error: ' + (err && err.name ? err.name : 'Unknown') + ': ' + (err && err.message ? err.message : err) + '\n\n' +
+      'Common causes: page not served over HTTPS, Quest Guardian/boundary not set up, ' +
+      'hand tracking disabled in Quest Settings → Movement Tracking, or the browser permission prompt was dismissed.'
+    );
+  }
+});
+
+switchCar('coupe');
+handleSpotifyRedirect();
+</script>
+</body>
+</html>
