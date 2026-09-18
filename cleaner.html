@@ -1,0 +1,1225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>song-cleaner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/dist/browser-id3-writer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsmediatags@3.9.7/dist/jsmediatags.min.js"></script>
+<style>
+:root {
+  --navy-950: #050912;
+  --navy-900: #0b1226;
+  --navy-850: #0f1830;
+  --navy-800: #152040;
+  --line-soft: #1a2544;
+  --volt: #cdff3f;
+  --cyan: #5fe0e8;
+  --amber: #ffb454;
+  --coral: #ff8a7a;
+  --mint: #7bd99a;
+
+  --bg: var(--navy-950);
+  --surface: var(--navy-900);
+  --ink: #e9edf9;
+  --muted: #8b96b8;
+  --line: #26355c;
+  --accent: var(--volt);
+  --accent-ink: #0a1206;
+  --fast: var(--mint);
+  --fast-bg: rgba(123, 217, 154, .12);
+  --slow: var(--amber);
+  --slow-bg: rgba(255, 180, 84, .12);
+  --neutral-bg: var(--navy-800);
+  --warn: var(--coral);
+  --warn-bg: rgba(255, 138, 122, .12);
+  --scrim: rgba(5, 9, 18, .75);
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "JetBrains Mono", "SFMono-Regular", ui-monospace, Menlo, monospace;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font-family: var(--body); font-size: 15.5px; line-height: 1.55;
+  padding-bottom: 120px; position: relative;
+}
+
+.bg-grid {
+  position: fixed; inset: -10%;
+  background-image: linear-gradient(var(--line-soft) 1px, transparent 1px), linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
+  background-size: 42px 42px; opacity: .35;
+  -webkit-mask-image: radial-gradient(circle at 50% 20%, black 0%, transparent 68%);
+  mask-image: radial-gradient(circle at 50% 20%, black 0%, transparent 68%);
+  pointer-events: none; will-change: transform; transition: transform .4s ease-out; z-index: 0;
+}
+.bg-glow {
+  position: fixed; top: -20%; left: 50%; width: 900px; height: 900px; transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(205,255,63,.08) 0%, rgba(205,255,63,0) 60%);
+  pointer-events: none; z-index: 0;
+}
+.cursor-glow {
+  position: fixed; top: 0; left: 0; width: 560px; height: 560px; margin-left: -280px; margin-top: -280px;
+  background: radial-gradient(circle, rgba(205,255,63,.14) 0%, rgba(205,255,63,.04) 45%, rgba(205,255,63,0) 72%);
+  pointer-events: none; z-index: 0; opacity: 0; transition: opacity .5s ease; will-change: transform;
+}
+.cursor-glow.visible { opacity: 1; }
+
+.wrap { max-width: 860px; margin: 0 auto; padding: 48px 20px 0; position: relative; z-index: 1; }
+h1 {
+  font-family: var(--display); font-weight: 700; font-size: clamp(1.9rem, 5.4vw, 2.6rem);
+  line-height: 1.05; letter-spacing: -0.02em; margin: 0 0 6px;
+  opacity: 0; animation: riseIn .6s cubic-bezier(.2,.8,.2,1) .05s forwards;
+}
+h1 .crumb { color: var(--text-dim, var(--muted)); font-weight: 400; }
+h1 .cursor { color: var(--volt); animation: blink 1.1s step-end infinite; font-weight: 400; }
+h2 { font-family: var(--display); font-weight: 600; font-size: 1.1rem; margin: 0 0 4px; letter-spacing: -0.005em; }
+.lede { color: var(--muted); max-width: 62ch; margin: 0 0 8px; font-size: .93rem; opacity: 0; animation: riseIn .6s cubic-bezier(.2,.8,.2,1) .15s forwards; }
+.status-line {
+  display: flex; align-items: center; gap: 8px; margin: 0 0 30px; color: var(--text-faint, var(--muted));
+  font-size: .8rem; opacity: 0; animation: riseIn .6s cubic-bezier(.2,.8,.2,1) .22s forwards;
+}
+.status-line .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mint); flex-shrink: 0; box-shadow: 0 0 0 0 rgba(123,217,154,.45); animation: pulse 2s ease-out infinite; }
+@keyframes riseIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes blink { 0%,45% { opacity: 1; } 50%,95% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(123,217,154,.45); } 70% { box-shadow: 0 0 0 6px rgba(123,217,154,0); } 100% { box-shadow: 0 0 0 0 rgba(123,217,154,0); } }
+.hint { color: var(--muted); font-size: .82rem; margin: 0 0 12px; }
+.panel-label {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--line);
+  color: var(--muted); font-size: .78rem; letter-spacing: .01em;
+}
+
+.drop {
+  border: 1px solid var(--line); background: linear-gradient(180deg, var(--navy-900), var(--navy-850));
+  border-radius: 10px; padding: 36px 20px; text-align: center; transition: border-color .15s, background .15s;
+}
+.drop.over { border-color: var(--volt); background: rgba(205,255,63,.06); }
+.drop p { margin: 0 0 14px; font-weight: 500; color: var(--ink); }
+.drop .sub { color: var(--muted); font-weight: 400; font-size: .85rem; margin-top: 12px; margin-bottom: 0; }
+.btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+button {
+  font: inherit; font-weight: 500; cursor: pointer; border-radius: 6px;
+  padding: 10px 18px; border: 1px solid var(--line); background: transparent; color: var(--ink);
+  transition: background .18s ease, border-color .18s ease, color .18s ease;
+}
+button:hover { background: var(--navy-800); border-color: var(--line); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); background: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+button.small { padding: 4px 10px; font-size: .78rem; font-weight: 500; border-width: 1px; border-color: var(--line); color: var(--muted); white-space: nowrap; border-radius: 5px; }
+button.small:hover { color: var(--ink); border-color: var(--cyan); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--volt); outline-offset: 2px; }
+
+.options { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; margin: 22px 0 0; }
+@media (max-width: 640px) { .options { grid-template-columns: 1fr; } }
+.opt label.lbl { display: block; font-weight: 500; font-size: .82rem; color: var(--muted); margin-bottom: 6px; }
+.opt select, .opt input[type=text], .f input {
+  width: 100%; font: inherit; padding: 9px 12px; border-radius: 6px; color: var(--ink);
+  background: var(--navy-850); border: 1px solid var(--line);
+}
+.check { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; font-size: .87rem; color: var(--muted); }
+input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); flex: none; margin-top: 3px; }
+
+.panel { background: linear-gradient(180deg, var(--navy-900), var(--navy-850)); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 18px 0 0; }
+.bulk { display: grid; grid-template-columns: 110px 1fr; gap: 16px; }
+.fields { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.f label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: 2px; }
+.f input { padding: 7px 10px; border-radius: 8px; background: var(--bg); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.row .sp { flex: 1; }
+@media (max-width: 560px) {
+  .bulk, .tags { grid-template-columns: 1fr !important; }
+  .fields { grid-template-columns: 1fr; }
+}
+.cover {
+  width: 110px; height: 110px; border-radius: 8px; border: 1px dashed var(--line);
+  background: var(--navy-800); color: var(--muted); padding: 0; overflow: hidden;
+  font-size: .78rem; font-weight: 500; display: block;
+}
+.cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.coverbox { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+
+.status { min-height: 1.5em; color: var(--muted); font-size: .86rem; margin: 18px 0 6px; }
+
+.group {
+  background: linear-gradient(180deg, var(--navy-900), var(--navy-850)); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px 6px; margin: 0 0 14px;
+}
+.group.flag { border-color: var(--coral); }
+.ghead { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
+.title-in {
+  flex: 1; min-width: 150px; font-family: var(--display); font-weight: 600; font-size: 1.3rem;
+  letter-spacing: -0.01em; color: var(--ink); background: transparent;
+  border: none; border-bottom: 2px solid transparent; padding: 2px 0; border-radius: 0;
+}
+.title-in:hover { border-bottom-color: var(--line); }
+.title-in:focus { border-bottom-color: var(--volt); outline: none; }
+.mini { width: 36px; height: 36px; border-radius: 5px; object-fit: cover; flex: none; }
+.metaline { color: var(--muted); font-size: .82rem; margin: 0 0 6px 28px; }
+.note { font-size: .82rem; color: var(--coral); background: var(--warn-bg); padding: 6px 10px; border-radius: 6px; margin: 6px 0 8px; display: flex; gap: 10px; align-items: center; justify-content: space-between; flex-wrap: wrap; border: 1px solid rgba(255,138,122,.25); }
+.tags { display: grid; grid-template-columns: 110px 1fr; gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.tagnote { grid-column: 1 / -1; color: var(--muted); font-size: .8rem; margin: 0; }
+
+.file {
+  display: grid; grid-template-columns: 84px 1fr auto auto; gap: 12px; align-items: center;
+  padding: 10px 0; border-top: 1px solid var(--line);
+}
+.role {
+  font-size: .74rem; font-weight: 600; text-align: center; padding: 3px 0; border-radius: 4px;
+  background: var(--navy-800); color: var(--muted); border: 1px solid var(--line);
+}
+.role.fast { background: var(--fast-bg); color: var(--fast); border-color: rgba(123,217,154,.3); }
+.role.slow { background: var(--slow-bg); color: var(--slow); border-color: rgba(255,180,84,.3); }
+.names { min-width: 0; }
+.now { font-weight: 500; overflow-wrap: anywhere; }
+.was {
+  color: var(--muted); font-size: .8rem; text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted) 45%, transparent);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dur { font-variant-numeric: tabular-nums; color: var(--muted); font-size: .85rem; }
+@media (max-width: 520px) {
+  .file { grid-template-columns: 72px 1fr auto; }
+  .dur { grid-column: 2; }
+  .file .small { grid-column: 3; grid-row: 1; }
+}
+
+.bar {
+  position: fixed; left: 0; right: 0; bottom: 0; background: var(--navy-900);
+  border-top: 1px solid var(--line); padding: 14px 20px; z-index: 10;
+}
+.bar-in { max-width: 860px; margin: 0 auto; display: flex; align-items: center; gap: 14px; justify-content: space-between; flex-wrap: wrap; }
+.summary { font-size: .85rem; color: var(--muted); }
+.summary strong { color: var(--ink); font-weight: 600; }
+.bar-actions { display: flex; gap: 10px; align-items: center; }
+
+.modal { position: fixed; inset: 0; background: var(--scrim); display: flex; align-items: center; justify-content: center; padding: 20px; z-index: 30; }
+.sheet { background: var(--navy-900); border: 1px solid var(--line); border-radius: 10px; width: 100%; max-width: 480px; max-height: 82vh; display: flex; flex-direction: column; padding: 18px; }
+.sheet input[type=search] { width: 100%; font: inherit; padding: 9px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--navy-850); color: var(--ink); margin-top: 10px; }
+.mlist { overflow: auto; margin: 12px 0; border-top: 1px solid var(--line); flex: 1; min-height: 120px; }
+.mrow { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left; border: none; border-bottom: 1px solid var(--line); border-radius: 0; font-weight: 500; padding: 10px 4px; color: var(--ink); background: transparent; }
+.mrow:hover { background: var(--navy-800); color: var(--ink); }
+.mrow span:last-child { color: var(--muted); font-weight: 400; font-size: .82rem; flex: none; }
+.mrow.special { color: var(--volt); }
+.wasname { color: var(--muted); font-size: .82rem; overflow-wrap: anywhere; margin: 0; }
+.find { grid-column: 1 / -1; border-top: 1px dashed var(--line); padding-top: 12px; }
+.find .fields { margin-bottom: 8px; }
+.cand { display: grid; grid-template-columns: 48px 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.cthumb { width: 48px; height: 48px; border-radius: 5px; object-fit: cover; background: var(--navy-800); }
+.ctext { min-width: 0; overflow-wrap: anywhere; }
+.ctext .sub2 { color: var(--muted); font-size: .82rem; }
+.findmsg { color: var(--muted); font-size: .84rem; margin: 8px 0 0; }
+.findmsg.err { color: var(--coral); }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<div class="bg-grid" id="bgGrid"></div>
+<div class="bg-glow"></div>
+<div class="cursor-glow" id="cursorGlow"></div>
+
+<div class="wrap">
+  <h1><span class="crumb">songs /</span> clean-up<span class="cursor">▌</span></h1>
+  <p class="lede">Add your songs. Messy file names are trimmed to the title, and when a song has two files — or a “1” and “2” that are really the same track — the longer one becomes “Title (Slowed)”. Fix any grouping that's wrong and pull in artist, album and cover art. Nothing is uploaded; it all happens in your browser.</p>
+  <div class="status-line"><span class="dot"></span><span>runs entirely client-side · nothing leaves this tab</span></div>
+
+  <div class="panel-label"><span>~/drop</span><span>local only</span></div>
+  <div class="drop" id="drop">
+    <p>Drop your song files or a folder here</p>
+    <div class="btns">
+      <button class="primary" id="pickFiles">Choose files</button>
+      <button id="pickFolder">Choose a folder</button>
+    </div>
+    <p class="sub">MP3, M4A, WAV, FLAC, OGG and other audio files</p>
+    <input type="file" id="fileInput" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg,.opus,.wma,.aiff" multiple hidden>
+    <input type="file" id="folderInput" webkitdirectory multiple hidden>
+    <input type="file" id="coverInput" accept="image/*" hidden>
+  </div>
+
+  <div id="panels" hidden>
+    <div class="options">
+      <div class="opt">
+        <label class="lbl" for="mode">Where is the song title in the file name?</label>
+        <select id="mode">
+          <option value="before">Before the dash (Title - Artist)</option>
+          <option value="after">After the dash (Artist - Title)</option>
+          <option value="none">No dash, just remove the extra words</option>
+        </select>
+      </div>
+      <div class="opt">
+        <label class="lbl" for="suffix">Label for the longer file</label>
+        <input type="text" id="suffix" value="Slowed" spellcheck="false">
+      </div>
+    </div>
+    <label class="check"><input type="checkbox" id="mergeNums" checked><span>Treat “Song 1” and “Song 2” (or “Song (2)”) as the same song when the number is the only difference. A lone “Song 2” keeps its number.</span></label>
+    <label class="check"><input type="checkbox" id="syncTitle" checked><span>Set each MP3’s title tag to match its new name, so players show “Gumshuda (Slowed)” too.</span></label>
+
+    <div class="panel">
+      <div class="panel-label" style="border:none; padding:0; margin:0 0 10px;"><span>~/tags</span><span>many songs at once</span></div>
+      <p class="hint" id="bulkHint">Fill in what you want to change, then apply. Empty boxes are left alone.</p>
+      <div class="bulk">
+        <div class="coverbox">
+          <button class="cover" id="bulkCover" aria-label="Choose cover art for many songs">Add art</button>
+          <button class="small" id="bulkCoverClear" hidden>Remove art</button>
+        </div>
+        <div>
+          <div class="fields">
+            <div class="f"><label for="bArtist">Artist</label><input id="bArtist" type="text" spellcheck="false"></div>
+            <div class="f"><label for="bAlbum">Album</label><input id="bAlbum" type="text" spellcheck="false"></div>
+            <div class="f"><label for="bYear">Year</label><input id="bYear" type="text" inputmode="numeric" maxlength="4"></div>
+            <div class="f"><label for="bGenre">Genre</label><input id="bGenre" type="text" spellcheck="false"></div>
+          </div>
+          <div class="row">
+            <button class="primary" id="bulkApply">Apply to all songs</button>
+            <button id="fillArtists">Fill artists from file names</button>
+            <button id="findAll">Find tags online</button>
+            <span class="sp"></span>
+            <button class="small" id="selAll">Select all</button>
+            <button class="small" id="selNone">Select none</button>
+          </div>
+          <label class="check"><input type="checkbox" id="keepExisting"><span>Keep tags my files already have (only fill blanks)</span></label>
+          <p class="hint" style="margin:8px 0 0">Online lookup searches MusicBrainz for tags and the highest-resolution cover art available, with iTunes as a backup. Confident matches are applied and marked so you can check them; the rest are left for you. It needs internet access, so it works in the downloaded copy of this page, not the hosted link.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status" id="status" role="status" aria-live="polite"></div>
+  <div class="panel-label" id="listLabel" hidden><span>~/songs</span><span>rename, tag, or move a file between songs</span></div>
+  <div id="list"></div>
+</div>
+
+<div class="bar" id="bar" hidden>
+  <div class="bar-in">
+    <div class="summary" id="summary"></div>
+    <div class="bar-actions">
+      <button id="clear">Clear all</button>
+      <button class="primary" id="download">Download ZIP</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal" id="modal" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mtitle">
+    <h2 id="mtitle">Move this file</h2>
+    <p class="wasname" id="mfile"></p>
+    <input type="search" id="msearch" placeholder="Search songs" autocomplete="off">
+    <div class="mlist" id="mlist"></div>
+    <div class="btns"><button id="mclose">Cancel</button></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var AUDIO_RE = /\.(mp3|m4a|aac|wav|flac|ogg|oga|opus|wma|aif|aiff|mp4|webm)$/i;
+  var items = [];          // {id, file, stem, ext, dur, tags}
+  var overrides = {};      // group key -> custom title
+  var swaps = {};          // group key -> roles flipped
+  var assign = {};         // item id -> {type:'solo', title} | {type:'group', key, title}
+  var metaEdits = {};      // group key -> {artist, album, year, genre, track, cover}
+  var selected = {};       // group key -> true
+  var openTags = {};       // group key -> true
+  var groups = [];
+  var nextId = 1;
+  var bulkCover = null;
+  var coverTarget = null;
+  var moveId = null;
+  var cands = {};          // group key -> {loading}|{error}|{list, q}
+  var qState = {};         // group key -> {title, artist} typed in the search boxes
+  var matched = {};        // group key -> 'MusicBrainz 98' etc.
+  var lookupRunning = false, stopLookup = false;
+
+  var $ = function (id) { return document.getElementById(id); };
+  var listEl = $('list'), statusEl = $('status'), barEl = $('bar'), summaryEl = $('summary');
+  var FIELDS = ['artist', 'album', 'year', 'genre', 'track'];
+
+  /* ---------- name cleaning ---------- */
+  var JUNK = /\b(?:official|music video|lyric video|lyrics?|lyrical|audio|video|tagged|slowed|reverb|sped up|speed up|nightcore|visuali[sz]er|hd|hq|4k|full song|ft|feat|prod)\b.*$/i;
+
+  function splitParts(stem) {
+    var s = stem.replace(/\s*\(\d+\)\s*$/, '');
+    s = s.replace(/_-_/g, ' - ').replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+    return { whole: s, parts: s.split(/\s+[-\u2013\u2014]\s+/) };
+  }
+  function tidy(t) {
+    t = t.replace(JUNK, '');
+    t = t.replace(/[\(\[][^\)\]]*[\)\]]\s*$/, function (m) { return JUNK.test(m.slice(1, -1)) ? '' : m; });
+    return t.replace(/[\s\-\u2013\u2014|:,.(\[]+$/, '').trim();
+  }
+  function cleanTitle(stem, mode) {
+    var p = splitParts(stem), t = p.whole;
+    if (mode !== 'none' && p.parts.length > 1) t = mode === 'after' ? p.parts[1] : p.parts[0];
+    return tidy(t) || p.whole || stem;
+  }
+  function altTitle(stem, mode) {   // the other side of the dash
+    var p = splitParts(stem);
+    if (p.parts.length < 2) return cleanTitle(stem, mode);
+    return tidy(mode === 'after' ? p.parts[0] : p.parts[1]) || cleanTitle(stem, mode);
+  }
+  function guessArtist(stem, mode) {
+    if (mode === 'none') return '';
+    var p = splitParts(stem);
+    if (p.parts.length < 2) return '';
+    return tidy(mode === 'after' ? p.parts[0] : p.parts[1]);
+  }
+  function sanitize(n) {
+    return n.replace(/[\\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, ' ').replace(/[. ]+$/, '').trim();
+  }
+  function keyOf(title) {
+    var k = title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    return k || title.toLowerCase();
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function fmt(sec) {
+    if (sec == null) return '';
+    var m = Math.floor(sec / 60), s = Math.round(sec % 60);
+    if (s === 60) { m++; s = 0; }
+    return m + ':' + (s < 10 ? '0' : '') + s;
+  }
+  function label() { return (sanitize($('suffix').value) || 'Slowed'); }
+  function isMp3(it) { return /^\.mp3$/i.test(it.ext); }
+
+  /* ---------- grouping ---------- */
+  function buildGroups() {
+    var mode = $('mode').value;
+    var map = {}, order = [];
+    function put(key, auto, it) {
+      if (!map[key]) { map[key] = { key: key, auto: auto, items: [] }; order.push(key); }
+      map[key].items.push(it);
+    }
+    var later = [];
+    var merge = $('mergeNums').checked;
+    var pre = {}, plainKeys = {}, numSets = {};
+    items.forEach(function (it) {
+      if (assign[it.id]) return;
+      var auto = cleanTitle(it.stem, mode);
+      var p = { auto: auto, key: keyOf(auto) };
+      var mm = merge && auto.match(/^(.*?\S)(?:[\s_.-]+(\d{1,2})|\s*\((\d{1,2})\))$/);
+      if (mm && /\p{L}/u.test(mm[1])) {
+        p.base = mm[1].trim(); p.baseKey = keyOf(p.base);
+        (numSets[p.baseKey] = numSets[p.baseKey] || {})[p.key] = 1;
+      } else plainKeys[p.key] = 1;
+      pre[it.id] = p;
+    });
+    items.forEach(function (it) {
+      var a = assign[it.id];
+      if (a && a.type === 'solo') put('solo:' + it.id, a.title, it);
+      else if (a && a.type === 'group') later.push(it);
+      else {
+        var p = pre[it.id];
+        var doMerge = p.base && (plainKeys[p.baseKey] || Object.keys(numSets[p.baseKey]).length >= 2);
+        if (doMerge) put(p.baseKey, p.base, it); else put(p.key, p.auto, it);
+      }
+    });
+    later.forEach(function (it) { put(assign[it.id].key, assign[it.id].title, it); });
+
+    groups = order.map(function (k) {
+      var g = map[k];
+      var haveAllDur = g.items.every(function (i) { return i.dur != null; });
+      var metric = function (i) { return haveAllDur ? i.dur : i.file.size; };
+      g.items.sort(function (a, b) { return metric(a) - metric(b); });
+      if (swaps[g.key]) g.items.reverse();
+      g.notes = [];
+      var n = g.items.length;
+      if (n === 1) {
+        g.items[0].role = /slow/i.test(g.items[0].stem) ? 'slow' : 'single';
+      } else {
+        g.items.forEach(function (i, idx) { i.role = 'extra'; i.n = idx; });
+        g.items[0].role = 'fast';
+        g.items[n - 1].role = 'slow';
+        if (n > 2) g.notes.push({ text: 'This name has ' + n + ' files. The shortest and longest are labelled. If these are different songs, split them.', split: true });
+        if (!haveAllDur) g.notes.push({ text: 'Could not read the length of every file, so file size was used to guess which is longer.' });
+        else {
+          var lo = metric(g.items[0]), hi = metric(g.items[n - 1]);
+          if (n === 2 && hi - lo < 1.5) g.notes.push({ text: 'Both files are almost the same length. Use Swap if the labels are backwards.' });
+        }
+      }
+      return g;
+    });
+  }
+  function titleOf(g) { return Object.prototype.hasOwnProperty.call(overrides, g.key) ? overrides[g.key] : g.auto; }
+  function outName(g, it) {
+    var t = sanitize(titleOf(g)) || 'Untitled';
+    var suffix = '';
+    if (it.role === 'slow') suffix = ' (' + label() + ')';
+    else if (it.role === 'extra') suffix = ' (Extra ' + it.n + ')';
+    return t + suffix + it.ext;
+  }
+  function tagTitle(g, it) {
+    var t = (titleOf(g) || '').trim() || 'Untitled';
+    if (it.role === 'slow') t += ' (' + label() + ')';
+    else if (it.role === 'extra') t += ' (Extra ' + it.n + ')';
+    return t;
+  }
+  var ROLE = { fast: 'Sped up', slow: 'Slowed', single: 'Single', extra: 'Extra' };
+
+  /* ---------- metadata ---------- */
+  function effMeta(g) {
+    var e = metaEdits[g.key] || {}, out = {};
+    FIELDS.forEach(function (f) {
+      if (e[f] !== undefined) { out[f] = e[f]; return; }
+      out[f] = '';
+      for (var i = 0; i < g.items.length; i++) {
+        var t = g.items[i].tags;
+        if (t && t[f]) { out[f] = String(t[f]); break; }
+      }
+    });
+    if (e.cover !== undefined) out.cover = e.cover;
+    else {
+      out.cover = null;
+      for (var j = 0; j < g.items.length; j++) {
+        var tt = g.items[j].tags;
+        if (tt && tt.pic) { out.cover = tt.pic; break; }
+      }
+    }
+    return out;
+  }
+  function isDirty(g) { var e = metaEdits[g.key]; return !!e && Object.keys(e).length > 0; }
+  function edit(g) { return (metaEdits[g.key] = metaEdits[g.key] || {}); }
+
+  /* ---------- rendering ---------- */
+  function render() {
+    buildGroups();
+    var has = items.length > 0;
+    $('panels').hidden = !has;
+    barEl.hidden = !has;
+    $('listLabel').hidden = !has;
+    var html = '';
+    groups.forEach(function (g, gi) {
+      var m = effMeta(g), open = !!openTags[g.key];
+      html += '<section class="group' + (g.notes.length ? ' flag' : '') + '" data-gi="' + gi + '">';
+      html += '<div class="ghead"><input type="checkbox" class="sel" aria-label="Select this song"' + (selected[g.key] ? ' checked' : '') + '>';
+      html += '<input class="title-in" value="' + esc(titleOf(g)) + '" aria-label="Song title" spellcheck="false">';
+      if (m.cover && m.cover.thumb) html += '<img class="mini" src="' + m.cover.thumb + '" alt="Cover art">';
+      if (g.items.length > 1) html += '<button class="small" data-act="swap">Swap</button>';
+      html += '<button class="small" data-act="tags" aria-expanded="' + open + '">' + (open ? 'Hide tags' : 'Tags') + '</button></div>';
+      var line = [m.artist, m.album, m.year].filter(Boolean).join(', ');
+      if (line && matched[g.key]) line += ' (matched on ' + matched[g.key] + ')';
+      if (line && !open) html += '<p class="metaline">' + esc(line) + '</p>';
+      g.notes.forEach(function (n) {
+        html += '<div class="note"><span>' + esc(n.text) + '</span>' +
+          (n.split ? '<button class="small" data-act="splitall">Split into separate songs</button>' : '') + '</div>';
+      });
+      if (open) {
+        html += '<div class="tags"><div class="coverbox"><button class="cover" data-act="cover" aria-label="Choose cover art">' +
+          (m.cover && m.cover.thumb ? '<img src="' + m.cover.thumb + '" alt="Cover art">' : 'Add art') + '</button>' +
+          (m.cover ? '<button class="small" data-act="rmcover">Remove art</button>' : '') + '</div>';
+        html += '<div class="fields">';
+        [['artist', 'Artist'], ['album', 'Album'], ['year', 'Year'], ['genre', 'Genre'], ['track', 'Track number']].forEach(function (f) {
+          html += '<div class="f"><label>' + f[1] + '</label><input type="text" data-f="' + f[0] + '" value="' + esc(m[f[0]]) + '" spellcheck="false"></div>';
+        });
+        html += '</div>';
+        html += findPanel(g);
+        if (matched[g.key]) html += '<p class="tagnote">Matched online on ' + esc(matched[g.key]) + '. Check that it is the right song.</p>';
+        if (g.items.some(function (i) { return !isMp3(i); })) html += '<p class="tagnote">Tags are written to MP3 files only. Other formats in this song are renamed but keep their current tags.</p>';
+        html += '</div>';
+      }
+      g.items.forEach(function (it) {
+        html += '<div class="file"><span class="role ' + it.role + '">' + ROLE[it.role] + '</span>' +
+          '<div class="names"><div class="now" data-id="' + it.id + '">' + esc(outName(g, it)) + '</div>' +
+          '<div class="was" title="' + esc(it.file.name) + '">' + esc(it.file.name) + '</div></div>' +
+          '<span class="dur">' + fmt(it.dur) + '</span>' +
+          '<button class="small" data-act="move" data-id="' + it.id + '">Move</button></div>';
+      });
+      html += '</section>';
+    });
+    listEl.innerHTML = html;
+    var pairs = groups.filter(function (g) { return g.items.length === 2; }).length;
+    var flags = groups.filter(function (g) { return g.notes.length; }).length;
+    var nonMp3 = items.filter(function (i) { return !isMp3(i); }).length;
+    summaryEl.innerHTML = '<strong>' + items.length + '</strong> files &middot; <strong>' + groups.length + '</strong> songs &middot; ' +
+      pairs + ' pairs' + (flags ? ' &middot; <span style="color:var(--warn)">' + flags + ' to check</span>' : '') +
+      (nonMp3 ? ' &middot; ' + nonMp3 + ' not MP3 (names only)' : '');
+    updateBulk();
+  }
+
+  function findPanel(g) {
+    var m = effMeta(g), q = qState[g.key] || {};
+    var qt = q.title !== undefined ? q.title : titleOf(g);
+    var qa = q.artist !== undefined ? q.artist : (m.artist || guessArtist(g.items[0].stem, $('mode').value));
+    var c = cands[g.key];
+    var h = '<div class="find"><div class="fields">' +
+      '<div class="f"><label>Search for title</label><input type="text" data-q="title" value="' + esc(qt) + '" spellcheck="false"></div>' +
+      '<div class="f"><label>Search for artist</label><input type="text" data-q="artist" value="' + esc(qa) + '" spellcheck="false"></div></div>' +
+      '<button class="small" data-act="find"' + (c && c.loading ? ' disabled' : '') + '>Search online</button>';
+    if (c && c.loading) h += '<p class="findmsg">Searching...</p>';
+    else if (c && c.error) h += '<p class="findmsg err">' + esc(c.error) + '</p>';
+    else if (c && c.list) {
+      if (!c.list.length) h += '<p class="findmsg">No matches. Try a shorter title or remove the artist.</p>';
+      c.list.slice(0, 8).forEach(function (x, i) {
+        h += '<div class="cand"><img class="cthumb" src="' + esc(x.thumb || '') + '" alt="">' +
+          '<div class="ctext"><strong>' + esc(x.title) + '</strong><div class="sub2">' +
+          esc([x.artist, x.album, x.year].filter(Boolean).join(', ')) + ' (' + esc(x.source) + (x.score ? ' ' + x.score : '') + ')</div></div>' +
+          '<button class="small" data-act="usecand" data-i="' + i + '">Use this</button></div>';
+      });
+    }
+    return h + '</div>';
+  }
+
+  function selectedGroups() {
+    var s = groups.filter(function (g) { return selected[g.key]; });
+    return s.length ? s : groups;
+  }
+  function updateBulk() {
+    var any = groups.some(function (g) { return selected[g.key]; });
+    var n = selectedGroups().length;
+    $('bulkApply').textContent = any ? 'Apply to ' + n + ' selected' : 'Apply to all ' + n + ' songs';
+    $('bulkHint').textContent = any
+      ? 'Changes go to the checked songs only. Empty boxes are left alone.'
+      : 'Changes go to every song. Check some songs first to limit them. Empty boxes are left alone.';
+    var bc = $('bulkCover');
+    if (bulkCover) { bc.innerHTML = '<img src="' + bulkCover.thumb + '" alt="Chosen cover art">'; }
+    else bc.textContent = 'Add art';
+    $('bulkCoverClear').hidden = !bulkCover;
+  }
+
+  function refreshNames(sec) {
+    var g = groups[+sec.dataset.gi];
+    g.items.forEach(function (it) {
+      var el = sec.querySelector('.now[data-id="' + it.id + '"]');
+      if (el) el.textContent = outName(g, it);
+    });
+  }
+
+  listEl.addEventListener('input', function (e) {
+    var sec = e.target.closest('.group');
+    if (!sec) return;
+    var g = groups[+sec.dataset.gi];
+    if (e.target.classList.contains('title-in')) {
+      overrides[g.key] = e.target.value;
+      refreshNames(sec);
+    } else if (e.target.dataset.f) {
+      edit(g)[e.target.dataset.f] = e.target.value;
+    } else if (e.target.dataset.q) {
+      (qState[g.key] = qState[g.key] || {})[e.target.dataset.q] = e.target.value;
+    }
+  });
+  listEl.addEventListener('error', function (e) {
+    if (e.target.classList && e.target.classList.contains('cthumb')) e.target.style.visibility = 'hidden';
+  }, true);
+  listEl.addEventListener('change', function (e) {
+    if (!e.target.classList.contains('sel')) return;
+    var g = groups[+e.target.closest('.group').dataset.gi];
+    if (e.target.checked) selected[g.key] = true; else delete selected[g.key];
+    updateBulk();
+  });
+  listEl.addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-act]');
+    if (!btn) return;
+    var sec = btn.closest('.group');
+    var g = groups[+sec.dataset.gi];
+    var act = btn.dataset.act;
+    if (act === 'swap') { swaps[g.key] = !swaps[g.key]; render(); }
+    else if (act === 'tags') { openTags[g.key] = !openTags[g.key]; render(); }
+    else if (act === 'cover') { coverTarget = g.key; $('coverInput').click(); }
+    else if (act === 'rmcover') { edit(g).cover = null; render(); }
+    else if (act === 'move') { openMove(+btn.dataset.id); }
+    else if (act === 'find') { searchOne(g, sec); }
+    else if (act === 'usecand') { useCandidate(g, +btn.dataset.i); }
+    else if (act === 'splitall') {
+      var mode = $('mode').value;
+      g.items.forEach(function (it) { assign[it.id] = { type: 'solo', title: altTitle(it.stem, mode) }; });
+      statusEl.textContent = 'Split "' + titleOf(g) + '" into ' + g.items.length + ' separate songs. Rename them, then use Move to pair the right files together.';
+      render();
+    }
+  });
+
+  function resetGrouping() {
+    overrides = {}; swaps = {}; assign = {}; metaEdits = {}; selected = {}; openTags = {};
+    cands = {}; qState = {}; matched = {};
+    statusEl.textContent = 'Grouping recalculated. Manual changes were cleared.';
+    render();
+  }
+  $('mode').addEventListener('change', resetGrouping);
+  $('mergeNums').addEventListener('change', resetGrouping);
+  $('suffix').addEventListener('input', function () {
+    document.querySelectorAll('.group').forEach(refreshNames);
+  });
+
+  /* ---------- move dialog ---------- */
+  function openMove(id) {
+    moveId = id;
+    var it = items.filter(function (i) { return i.id === id; })[0];
+    $('mfile').textContent = it.file.name;
+    $('msearch').value = '';
+    renderMoveList();
+    $('modal').hidden = false;
+    $('msearch').focus();
+  }
+  function closeMove() { $('modal').hidden = true; moveId = null; }
+  function renderMoveList() {
+    var q = $('msearch').value.trim().toLowerCase();
+    var cur = groups.filter(function (g) { return g.items.some(function (i) { return i.id === moveId; }); })[0];
+    var html = '<button class="mrow special" data-k="__solo"><span>Make it its own song</span><span></span></button>';
+    if (assign[moveId]) html += '<button class="mrow special" data-k="__auto"><span>Put it back where it was detected</span><span></span></button>';
+    groups.filter(function (g) { return g !== cur && titleOf(g).toLowerCase().indexOf(q) !== -1; })
+      .sort(function (a, b) { return titleOf(a).localeCompare(titleOf(b)); })
+      .forEach(function (g) {
+        html += '<button class="mrow" data-k="' + esc(g.key) + '"><span>' + esc(titleOf(g)) + '</span><span>' +
+          g.items.length + (g.items.length === 1 ? ' file' : ' files') + '</span></button>';
+      });
+    $('mlist').innerHTML = html;
+  }
+  $('msearch').addEventListener('input', renderMoveList);
+  $('mclose').onclick = closeMove;
+  $('modal').addEventListener('click', function (e) { if (e.target === $('modal')) closeMove(); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('modal').hidden) closeMove(); });
+  $('mlist').addEventListener('click', function (e) {
+    var b = e.target.closest('.mrow');
+    if (!b) return;
+    var k = b.dataset.k;
+    var it = items.filter(function (i) { return i.id === moveId; })[0];
+    if (k === '__solo') {
+      assign[moveId] = { type: 'solo', title: altTitle(it.stem, $('mode').value) };
+      statusEl.textContent = 'Made its own song. Rename it if the title is not right.';
+    } else if (k === '__auto') {
+      delete assign[moveId];
+      statusEl.textContent = 'Put back where it was detected.';
+    } else {
+      var tg = groups.filter(function (g) { return g.key === k; })[0];
+      assign[moveId] = { type: 'group', key: k, title: titleOf(tg) };
+      statusEl.textContent = 'Moved into "' + titleOf(tg) + '".';
+    }
+    closeMove();
+    render();
+  });
+
+  /* ---------- cover art + tag reading ---------- */
+  function bytesToDataUrl(bytes, mime) {
+    return new Promise(function (res) {
+      var r = new FileReader();
+      r.onload = function () { res(r.result); };
+      r.onerror = function () { res(null); };
+      r.readAsDataURL(new Blob([bytes], { type: mime || 'image/jpeg' }));
+    });
+  }
+  function loadImg(src) {
+    return new Promise(function (res) {
+      var i = new Image();
+      i.onload = function () { res(i); };
+      i.onerror = function () { res(null); };
+      i.src = src;
+    });
+  }
+  function squareCanvas(im, size) {
+    var s = Math.min(im.naturalWidth, im.naturalHeight);
+    var sx = (im.naturalWidth - s) / 2, sy = (im.naturalHeight - s) / 2;
+    var c = document.createElement('canvas');
+    c.width = c.height = Math.max(1, Math.min(size, s));
+    c.getContext('2d').drawImage(im, sx, sy, s, s, 0, 0, c.width, c.height);
+    return c;
+  }
+  async function thumbFrom(bytes, mime) {
+    var du = await bytesToDataUrl(bytes, mime);
+    if (!du) return '';
+    var im = await loadImg(du);
+    if (!im) return '';
+    return squareCanvas(im, 96).toDataURL('image/jpeg', 0.8);
+  }
+  async function coverFromFile(file) {
+    var du = await bytesToDataUrl(file, file.type);
+    var im = du && await loadImg(du);
+    if (!im) return null;
+    var full = squareCanvas(im, 1000).toDataURL('image/jpeg', 0.9);
+    var bin = atob(full.split(',')[1]), bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return { bytes: bytes, thumb: squareCanvas(im, 96).toDataURL('image/jpeg', 0.8) };
+  }
+
+  function readTags(file) {
+    return new Promise(function (resolve) {
+      if (!window.jsmediatags || !/\.(mp3|m4a|mp4|aac|flac)$/i.test(file.name)) return resolve(null);
+      var timer = setTimeout(function () { resolve(null); }, 6000);
+      try {
+        window.jsmediatags.read(file, {
+          onSuccess: function (d) { clearTimeout(timer); resolve(d.tags || null); },
+          onError: function () { clearTimeout(timer); resolve(null); }
+        });
+      } catch (e) { clearTimeout(timer); resolve(null); }
+    });
+  }
+  async function loadTags(file) {
+    var t = await readTags(file);
+    if (!t) return null;
+    var o = { title: t.title || '', artist: t.artist || '', album: t.album || '', year: t.year || '', genre: t.genre || '', track: t.track || '', pic: null };
+    if (t.picture && t.picture.data && t.picture.data.length) {
+      try {
+        var bytes = new Uint8Array(t.picture.data);
+        o.pic = { bytes: bytes, thumb: await thumbFrom(bytes, t.picture.format) };
+      } catch (e) { o.pic = null; }
+    }
+    return o;
+  }
+
+  $('coverInput').onchange = async function (e) {
+    var f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    var c = await coverFromFile(f);
+    if (!c) { statusEl.textContent = 'That image could not be read. Try a JPG or PNG.'; return; }
+    if (coverTarget === '__bulk') { bulkCover = c; updateBulk(); }
+    else {
+      metaEdits[coverTarget] = metaEdits[coverTarget] || {};
+      metaEdits[coverTarget].cover = c;
+      render();
+    }
+    statusEl.textContent = 'Cover art added. Non-square images are cropped to a square from the center.';
+  };
+  $('bulkCover').onclick = function () { coverTarget = '__bulk'; $('coverInput').click(); };
+  $('bulkCoverClear').onclick = function () { bulkCover = null; updateBulk(); };
+
+  $('bulkApply').onclick = function () {
+    var vals = { artist: $('bArtist').value.trim(), album: $('bAlbum').value.trim(), year: $('bYear').value.trim(), genre: $('bGenre').value.trim() };
+    var targets = selectedGroups();
+    var touched = false;
+    targets.forEach(function (g) {
+      Object.keys(vals).forEach(function (f) { if (vals[f]) { edit(g)[f] = vals[f]; touched = true; } });
+      if (bulkCover) { edit(g).cover = bulkCover; touched = true; }
+    });
+    if (!touched) { statusEl.textContent = 'Fill in at least one box or choose cover art first.'; return; }
+    statusEl.textContent = 'Applied to ' + targets.length + (targets.length === 1 ? ' song.' : ' songs.') + ' Open a song’s Tags to check it.';
+    render();
+  };
+  $('fillArtists').onclick = function () {
+    var mode = $('mode').value, n = 0;
+    selectedGroups().forEach(function (g) {
+      var m = effMeta(g);
+      if (m.artist) return;
+      var a = guessArtist(g.items[0].stem, mode);
+      if (a) { edit(g).artist = a; n++; }
+    });
+    statusEl.textContent = n ? 'Filled in ' + n + ' artist' + (n === 1 ? '' : 's') + ' from the file names. Songs that already had an artist were skipped.' :
+      'No artist could be found in the file names (or the songs already have one).';
+    render();
+  };
+  /* ---------- online lookup (MusicBrainz, iTunes) ---------- */
+  var NET_MSG = 'Could not reach MusicBrainz. The hosted link blocks outside requests, so open the downloaded copy of this page instead. If you already did, check your connection.';
+  var lastMb = 0;
+  function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+  function xfetch(url) {
+    var c = new AbortController();
+    var t = setTimeout(function () { c.abort(); }, 15000);
+    return fetch(url, { signal: c.signal }).finally(function () { clearTimeout(t); });
+  }
+  function isNetErr(e) { return !!e && e.name === 'TypeError'; }
+  async function mbFetch(url) {
+    var wait = lastMb + 1100 - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastMb = Date.now();
+    var r = await xfetch(url);
+    if (r.status === 503) { await sleep(2500); lastMb = Date.now(); r = await xfetch(url); }
+    if (!r.ok) throw new Error('MusicBrainz answered with an error (' + r.status + '). Try again in a moment.');
+    return r.json();
+  }
+  function luc(s) { return s.replace(/(["\\])/g, '\\$1'); }
+  function pickRelease(r) {
+    var rels = r.releases || [];
+    if (!rels.length) return null;
+    function rank(x) {
+      var rg = x['release-group'] || {}, sc = 0;
+      if (x.status === 'Official') sc += 4;
+      if (rg['primary-type'] === 'Album' || rg['primary-type'] === 'Single' || rg['primary-type'] === 'EP') sc += 3;
+      if (rg['secondary-types'] && rg['secondary-types'].length) sc -= 4;
+      return sc;
+    }
+    return rels.slice().sort(function (a, b) {
+      var d = rank(b) - rank(a);
+      return d || (a.date || '9999').localeCompare(b.date || '9999');
+    })[0];
+  }
+  async function searchMB(title, artist) {
+    var q = 'recording:"' + luc(title) + '"' + (artist ? ' AND artist:"' + luc(artist) + '"' : '');
+    var d = await mbFetch('https://musicbrainz.org/ws/2/recording?query=' + encodeURIComponent(q) + '&fmt=json&limit=8');
+    return (d.recordings || []).map(function (r) {
+      var rel = pickRelease(r);
+      var credit = (r['artist-credit'] || []).map(function (a) { return (a.name || (a.artist && a.artist.name) || '') + (a.joinphrase || ''); }).join('');
+      var trk = rel && rel.media && rel.media[0] && rel.media[0].track && rel.media[0].track[0] ? rel.media[0].track[0].number : '';
+      var rgid = rel && rel['release-group'] && rel['release-group'].id;
+      return {
+        source: 'MusicBrainz', score: r.score || 0, title: r.title || '', artist: credit,
+        album: rel ? rel.title : '', year: ((rel && rel.date) || r['first-release-date'] || '').slice(0, 4),
+        track: /^\d+$/.test(trk || '') ? trk : '', genre: '',
+        thumb: rel ? 'https://coverartarchive.org/release/' + rel.id + '/front-250' : '',
+        art: rel ? [
+          'https://coverartarchive.org/release/' + rel.id + '/front',
+          'https://coverartarchive.org/release/' + rel.id + '/front-1200'
+        ].concat(rgid ? [
+          'https://coverartarchive.org/release-group/' + rgid + '/front',
+          'https://coverartarchive.org/release-group/' + rgid + '/front-1200'
+        ] : []).concat(['https://coverartarchive.org/release/' + rel.id + '/front-500']) : []
+      };
+    });
+  }
+  async function searchItunes(title, artist) {
+    var r = await xfetch('https://itunes.apple.com/search?entity=song&limit=6&term=' + encodeURIComponent((title + ' ' + artist).trim()));
+    if (!r.ok) throw new Error('iTunes answered with an error (' + r.status + ').');
+    var d = await r.json();
+    return (d.results || []).map(function (x) {
+      var art = x.artworkUrl100 || '';
+      return {
+        source: 'iTunes', score: 0, title: x.trackName || '', artist: x.artistName || '', album: x.collectionName || '',
+        year: (x.releaseDate || '').slice(0, 4), track: x.trackNumber ? String(x.trackNumber) : '', genre: x.primaryGenreName || '',
+        thumb: art.replace('100x100bb', '200x200bb'), art: art ? [art.replace('100x100bb', '1000x1000bb')] : []
+      };
+    });
+  }
+  function confident(c, title, artist) {
+    var tk = keyOf(title), ck = keyOf(c.title || '');
+    if (!ck || !tk || (ck !== tk && ck.indexOf(tk) !== 0 && tk.indexOf(ck) !== 0)) return false;
+    if (artist) {
+      var ak = keyOf(artist), cak = keyOf(c.artist || '');
+      if (!cak || (cak.indexOf(ak) === -1 && ak.indexOf(cak) === -1)) return false;
+    }
+    return c.source === 'MusicBrainz' ? c.score >= 90 : !!artist;
+  }
+  async function fetchCover(c) {
+    for (var i = 0; i < (c.art || []).length; i++) {
+      try {
+        var r = await xfetch(c.art[i]);
+        if (!r.ok) continue;
+        var cov = await coverFromFile(await r.blob());
+        if (cov) return cov;
+      } catch (e) { /* try the next image */ }
+    }
+    return null;
+  }
+  async function applyCand(g, c, keep) {
+    var e = edit(g), m = effMeta(g);
+    function set(f, v) { if (!v || (keep && m[f])) return; e[f] = String(v); }
+    set('artist', c.artist); set('album', c.album); set('year', c.year); set('genre', c.genre); set('track', c.track);
+    var gotArt = true;
+    if (!(keep && m.cover)) {
+      var cov = await fetchCover(c);
+      if (cov) e.cover = cov; else gotArt = false;
+    }
+    matched[g.key] = c.source + (c.score ? ' ' + c.score : '');
+    return gotArt;
+  }
+  async function searchOne(g, sec) {
+    var q = qState[g.key] = qState[g.key] || {};
+    var ti = sec.querySelector('[data-q=title]'), ar = sec.querySelector('[data-q=artist]');
+    q.title = ti.value.trim(); q.artist = ar.value.trim();
+    if (!q.title) return;
+    cands[g.key] = { loading: true };
+    render();
+    try {
+      var out = [], errs = [];
+      try { out = out.concat(await searchMB(q.title, q.artist)); } catch (e) { errs.push(e); }
+      try { out = out.concat(await searchItunes(q.title, q.artist)); } catch (e) { errs.push(e); }
+      if (!out.length && errs.length) throw errs[0];
+      cands[g.key] = { list: out, q: q };
+    } catch (e) {
+      cands[g.key] = { error: isNetErr(e) ? NET_MSG : (e && e.message) || 'The search failed.' };
+    }
+    render();
+  }
+  async function useCandidate(g, i) {
+    var c = cands[g.key] && cands[g.key].list && cands[g.key].list[i];
+    if (!c) return;
+    statusEl.textContent = 'Applying...';
+    var gotArt = await applyCand(g, c, false);
+    statusEl.textContent = 'Applied ' + c.source + ' tags to "' + titleOf(g) + '".' + (gotArt ? '' : ' Cover art could not be downloaded, so the current art was kept.');
+    render();
+  }
+
+  $('findAll').onclick = async function () {
+    var btn = $('findAll');
+    if (lookupRunning) { stopLookup = true; return; }
+    var targets = selectedGroups().slice();
+    lookupRunning = true; stopLookup = false; btn.textContent = 'Stop lookup';
+    var keep = $('keepExisting').checked, ok = 0, none = 0, blocked = false, noArt = 0, done = 0;
+    for (var i = 0; i < targets.length; i++) {
+      if (stopLookup) break;
+      var g = targets[i], m = effMeta(g), mode = $('mode').value;
+      var title = titleOf(g).trim(), artist = m.artist || guessArtist(g.items[0].stem, mode);
+      statusEl.textContent = 'Looking up ' + (i + 1) + ' of ' + targets.length + ': ' + title;
+      try {
+        var list = await searchMB(title, artist);
+        if (!list.length && artist) list = await searchMB(title, '');
+        var best = list.filter(function (c) { return confident(c, title, artist); })[0];
+        if (!best) {
+          try {
+            var more = await searchItunes(title, artist);
+            list = list.concat(more);
+            best = more.filter(function (c) { return confident(c, title, artist); })[0];
+          } catch (e2) { if (isNetErr(e2) && !list.length) throw e2; }
+        }
+        cands[g.key] = { list: list, q: { title: title, artist: artist } };
+        if (best) { if (!(await applyCand(g, best, keep))) noArt++; ok++; } else none++;
+      } catch (e) {
+        if (isNetErr(e)) { blocked = true; break; }
+        none++;
+      }
+      done++;
+    }
+    lookupRunning = false; btn.textContent = 'Find tags online';
+    if (blocked) statusEl.textContent = NET_MSG;
+    else statusEl.textContent = (stopLookup ? 'Stopped. ' : '') + 'Matched ' + ok + ' of ' + done + ' songs.' +
+      (none ? ' ' + none + ' had no confident match: open their Tags and use Search online to pick one.' : '') +
+      (noArt ? ' ' + noArt + ' matched without cover art.' : '');
+    render();
+  };
+  $('selAll').onclick = function () { groups.forEach(function (g) { selected[g.key] = true; }); render(); };
+  $('selNone').onclick = function () { selected = {}; render(); };
+
+  /* ---------- adding files ---------- */
+  function getDuration(file) {
+    return new Promise(function (resolve) {
+      var a = new Audio(), url;
+      try { url = URL.createObjectURL(file); } catch (e) { return resolve(null); }
+      var finished = false;
+      var done = function (v) {
+        if (finished) return; finished = true;
+        clearTimeout(timer);
+        a.onloadedmetadata = a.onerror = null;
+        try { a.removeAttribute('src'); a.load(); } catch (e) {}
+        URL.revokeObjectURL(url);
+        resolve(v);
+      };
+      var timer = setTimeout(function () { done(null); }, 8000);
+      a.preload = 'metadata';
+      a.onloadedmetadata = function () { done(isFinite(a.duration) && a.duration > 0 ? a.duration : null); };
+      a.onerror = function () { done(null); };
+      a.src = url;
+    });
+  }
+
+  async function addFiles(fileList) {
+    var incoming = Array.prototype.slice.call(fileList).filter(function (f) {
+      return AUDIO_RE.test(f.name) || (f.type && f.type.indexOf('audio') === 0);
+    });
+    var seen = {};
+    items.forEach(function (i) { seen[i.file.name + '|' + i.file.size] = 1; });
+    var fresh = [];
+    incoming.forEach(function (f) {
+      var k = f.name + '|' + f.size;
+      if (seen[k]) return;
+      seen[k] = 1;
+      var m = f.name.match(/^(.*?)(\.[^.]+)?$/);
+      fresh.push({ id: nextId++, file: f, stem: m[1], ext: m[2] || '', dur: null, tags: null });
+    });
+    if (!fresh.length) {
+      statusEl.textContent = incoming.length ? 'Those files are already in the list.' : 'No audio files found in that selection.';
+      return;
+    }
+    var done = 0, idx = 0;
+    async function worker() {
+      while (idx < fresh.length) {
+        var it = fresh[idx++];
+        it.dur = await getDuration(it.file);
+        it.tags = await loadTags(it.file);
+        done++;
+        statusEl.textContent = 'Reading song info: ' + done + ' of ' + fresh.length;
+      }
+    }
+    await Promise.all([worker(), worker(), worker(), worker(), worker(), worker()]);
+    items = items.concat(fresh);
+    var unread = fresh.filter(function (i) { return i.dur == null; }).length;
+    statusEl.textContent = 'Added ' + fresh.length + ' file' + (fresh.length === 1 ? '' : 's') + '.' +
+      (unread ? ' Could not read the length of ' + unread + ', so file size is used for those pairs.' : '');
+    render();
+  }
+
+  $('pickFiles').onclick = function () { $('fileInput').click(); };
+  $('pickFolder').onclick = function () { $('folderInput').click(); };
+  $('fileInput').onchange = function (e) { addFiles(e.target.files); e.target.value = ''; };
+  $('folderInput').onchange = function (e) { addFiles(e.target.files); e.target.value = ''; };
+
+  var drop = $('drop');
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('over'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) { e.preventDefault(); if (ev === 'drop' || !e.relatedTarget) drop.classList.remove('over'); });
+  });
+
+  function readEntry(entry, out) {
+    return new Promise(function (resolve) {
+      if (entry.isFile) {
+        entry.file(function (f) { out.push(f); resolve(); }, function () { resolve(); });
+      } else if (entry.isDirectory) {
+        var reader = entry.createReader(), all = [];
+        (function pump() {
+          reader.readEntries(function (batch) {
+            if (!batch.length) {
+              Promise.all(all.map(function (en) { return readEntry(en, out); })).then(resolve);
+            } else { all = all.concat(Array.prototype.slice.call(batch)); pump(); }
+          }, function () { resolve(); });
+        })();
+      } else resolve();
+    });
+  }
+  document.addEventListener('drop', async function (e) {
+    var dt = e.dataTransfer;
+    if (!dt) return;
+    var out = [];
+    if (dt.items && dt.items.length && dt.items[0].webkitGetAsEntry) {
+      var entries = [];
+      for (var i = 0; i < dt.items.length; i++) { var en = dt.items[i].webkitGetAsEntry(); if (en) entries.push(en); }
+      await Promise.all(entries.map(function (en) { return readEntry(en, out); }));
+    } else {
+      out = Array.prototype.slice.call(dt.files);
+    }
+    addFiles(out);
+  });
+
+  $('clear').onclick = function () {
+    items = []; overrides = {}; swaps = {}; assign = {}; metaEdits = {}; selected = {}; openTags = {}; groups = [];
+    cands = {}; qState = {}; matched = {};
+    bulkCover = null;
+    statusEl.textContent = '';
+    render();
+  };
+
+  /* ---------- zip + download ---------- */
+  function uniqueName(name, used) {
+    var lower = name.toLowerCase();
+    if (!used[lower]) { used[lower] = 1; return name; }
+    var dot = name.lastIndexOf('.');
+    var base = dot > 0 ? name.slice(0, dot) : name, ext = dot > 0 ? name.slice(dot) : '';
+    var n = 2, cand;
+    do { cand = base + ' (' + n++ + ')' + ext; } while (used[cand.toLowerCase()]);
+    used[cand.toLowerCase()] = 1;
+    return cand;
+  }
+
+  // Builds a new ID3 tag and puts it in front of the untouched audio (no full-file copy in memory).
+  async function taggedBlob(file, frames) {
+    var head = new Uint8Array(await file.slice(0, 10).arrayBuffer());
+    var skip = 0;
+    if (head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33 && head[3] >= 2 && head[3] <= 4) {
+      skip = ((head[6] << 21) | (head[7] << 14) | (head[8] << 7) | head[9]) + 10;
+      if (head[3] === 4 && (head[5] & 0x10)) skip += 10;
+    }
+    var w = new ID3Writer(new ArrayBuffer(0));
+    frames.forEach(function (f) {
+      try { w.setFrame(f[0], f[1]); } catch (e) { /* skip a frame that cannot be written (e.g. odd image type) */ }
+    });
+    w.addTag();
+    return new Blob([w.arrayBuffer, file.slice(skip)], { type: 'audio/mpeg' });
+  }
+  function framesFor(g, it, m, sync) {
+    var f = [];
+    var title = sync ? tagTitle(g, it) : ((it.tags && it.tags.title) || '');
+    if (title) f.push(['TIT2', title]);
+    if (m.artist) f.push(['TPE1', [m.artist]]);
+    if (m.album) f.push(['TALB', m.album]);
+    if (/^\d{4}$/.test(String(m.year).trim())) f.push(['TYER', parseInt(m.year, 10)]);
+    if (m.genre) f.push(['TCON', [m.genre]]);
+    if (String(m.track).trim()) f.push(['TRCK', String(m.track).trim()]);
+    if (m.cover && m.cover.bytes) f.push(['APIC', { type: 3, data: m.cover.bytes.buffer, description: '' }]);
+    return f;
+  }
+
+  $('download').onclick = async function () {
+    var btn = $('download');
+    if (!items.length) return;
+    if (typeof JSZip === 'undefined') { statusEl.textContent = 'The ZIP library did not load. Check your connection and reload the page.'; return; }
+    btn.disabled = true;
+    try {
+      var zip = new JSZip(), used = {}, sync = $('syncTitle').checked, n = 0, tagged = 0, failed = 0;
+      var canTag = typeof ID3Writer !== 'undefined';
+      for (var gi = 0; gi < groups.length; gi++) {
+        var g = groups[gi], m = effMeta(g), dirty = isDirty(g);
+        for (var ii = 0; ii < g.items.length; ii++) {
+          var it = g.items[ii];
+          var name = uniqueName(outName(g, it), used);
+          var data = it.file;
+          if (canTag && isMp3(it) && (sync || dirty)) {
+            try { data = await taggedBlob(it.file, framesFor(g, it, m, sync)); tagged++; }
+            catch (e) { data = it.file; failed++; }
+          }
+          zip.file(name, data, { compression: 'STORE' });
+          n++;
+          statusEl.textContent = 'Preparing ' + n + ' of ' + items.length + '...';
+        }
+      }
+      var blob = await zip.generateAsync({ type: 'blob', streamFiles: true, compression: 'STORE' }, function (mm) {
+        btn.textContent = 'Zipping ' + Math.round(mm.percent) + '%';
+      });
+      btn.textContent = 'Download ZIP';
+      var tagMsg = (tagged ? ' Tags written to ' + tagged + ' MP3' + (tagged === 1 ? '' : 's') + '.' : '') +
+        (failed ? ' ' + failed + ' file' + (failed === 1 ? '' : 's') + ' could not be tagged and kept the original tags.' : '') +
+        (!canTag && (sync || Object.keys(metaEdits).length) ? ' The tag library did not load, so tags were not written.' : '');
+
+      var dl = null;
+      try { if (window.claude && window.claude.use) dl = await window.claude.use('downloads'); } catch (e) { dl = null; }
+      if (dl) {
+        try {
+          await dl.save({ filename: 'songs-renamed.zip', data: blob });
+          statusEl.textContent = 'ZIP saved.' + tagMsg;
+        } catch (err) {
+          statusEl.textContent = (err && err.code === 'declined') ? 'Download cancelled.' : 'The download could not be saved (' + ((err && err.code) || 'error') + ').';
+        }
+      } else {
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'songs-renamed.zip';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+        statusEl.textContent = 'ZIP ready.' + tagMsg;
+      }
+    } catch (err) {
+      statusEl.textContent = 'Could not build the ZIP: ' + (err && err.message ? err.message : 'unknown error');
+      btn.textContent = 'Download ZIP';
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  render();
+})();
+</script>
+<script>
+(function () {
+  var bgGrid = document.getElementById('bgGrid');
+  var cursorGlow = document.getElementById('cursorGlow');
+  var mouseX = window.innerWidth / 2, mouseY = window.innerHeight / 2;
+  var glowX = mouseX, glowY = mouseY;
+
+  window.addEventListener('mousemove', function (e) {
+    mouseX = e.clientX; mouseY = e.clientY;
+    cursorGlow.classList.add('visible');
+    var gx = (mouseX / window.innerWidth - 0.5) * 18;
+    var gy = (mouseY / window.innerHeight - 0.5) * 18;
+    bgGrid.style.transform = 'translate(' + (-gx) + 'px, ' + (-gy) + 'px)';
+  });
+  window.addEventListener('mouseleave', function () { cursorGlow.classList.remove('visible'); });
+
+  function animateGlow() {
+    glowX += (mouseX - glowX) * 0.12;
+    glowY += (mouseY - glowY) * 0.12;
+    cursorGlow.style.transform = 'translate3d(' + glowX + 'px, ' + glowY + 'px, 0)';
+    requestAnimationFrame(animateGlow);
+  }
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) animateGlow();
+
+  // Tint the status-line dot to match whatever the tool is currently reporting.
+  var dot = document.querySelector('.status-line .dot');
+  var statusEl = document.getElementById('status');
+  if (dot && statusEl && window.MutationObserver) {
+    var flagWords = /could not|error|cancelled|blocked|not be/i;
+    var mo = new MutationObserver(function () {
+      var t = statusEl.textContent || '';
+      dot.style.background = t && flagWords.test(t) ? 'var(--coral)' : 'var(--mint)';
+    });
+    mo.observe(statusEl, { childList: true, characterData: true, subtree: true });
+  }
+})();
+</script>
+</body>
+</html>
