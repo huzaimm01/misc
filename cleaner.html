@@ -551,15 +551,19 @@ input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); fle
     var m = effMeta(g), q = qState[g.key] || {};
     var qt = q.title !== undefined ? q.title : titleOf(g);
     var qa = q.artist !== undefined ? q.artist : (m.artist || guessArtist(g.items[0].stem, $('mode').value));
+    var qb = q.album !== undefined ? q.album : (m.album || '');
+    var qy = q.year !== undefined ? q.year : (m.year || '');
     var c = cands[g.key];
     var h = '<div class="find"><div class="fields">' +
       '<div class="f"><label>Search for title</label><input type="text" data-q="title" value="' + esc(qt) + '" spellcheck="false"></div>' +
-      '<div class="f"><label>Search for artist</label><input type="text" data-q="artist" value="' + esc(qa) + '" spellcheck="false"></div></div>' +
+      '<div class="f"><label>Search for artist</label><input type="text" data-q="artist" value="' + esc(qa) + '" spellcheck="false"></div>' +
+      '<div class="f"><label>Search for album (optional)</label><input type="text" data-q="album" value="' + esc(qb) + '" spellcheck="false"></div>' +
+      '<div class="f"><label>Search for year (optional)</label><input type="text" data-q="year" value="' + esc(qy) + '" inputmode="numeric" maxlength="4"></div></div>' +
       '<button class="small" data-act="find"' + (c && c.loading ? ' disabled' : '') + '>Search online</button>';
     if (c && c.loading) h += '<p class="findmsg">Searching...</p>';
     else if (c && c.error) h += '<p class="findmsg err">' + esc(c.error) + '</p>';
     else if (c && c.list) {
-      if (!c.list.length) h += '<p class="findmsg">No matches. Try a shorter title or remove the artist.</p>';
+      if (!c.list.length) h += '<p class="findmsg">No matches. Try a shorter title, or clear the album/artist boxes.</p>';
       c.list.slice(0, 8).forEach(function (x, i) {
         h += '<div class="cand"><img class="cthumb" src="' + esc(x.thumb || '') + '" alt="">' +
           '<div class="ctext"><strong>' + esc(x.title) + '</strong><div class="sub2">' +
@@ -826,14 +830,22 @@ input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); fle
     return r.json();
   }
   function luc(s) { return s.replace(/(["\\])/g, '\\$1'); }
-  function pickRelease(r) {
+  function pickRelease(r, albumHint, yearHint) {
     var rels = r.releases || [];
     if (!rels.length) return null;
+    var ak = albumHint ? keyOf(albumHint) : '';
+    var yk = yearHint ? String(yearHint).slice(0, 4) : '';
     function rank(x) {
       var rg = x['release-group'] || {}, sc = 0;
       if (x.status === 'Official') sc += 4;
       if (rg['primary-type'] === 'Album' || rg['primary-type'] === 'Single' || rg['primary-type'] === 'EP') sc += 3;
       if (rg['secondary-types'] && rg['secondary-types'].length) sc -= 4;
+      if (ak) {
+        var xk = keyOf(x.title || '');
+        if (xk === ak) sc += 10;
+        else if (xk && (xk.indexOf(ak) !== -1 || ak.indexOf(xk) !== -1)) sc += 5;
+      }
+      if (yk && x.date && x.date.slice(0, 4) === yk) sc += 4;
       return sc;
     }
     return rels.slice().sort(function (a, b) {
@@ -841,11 +853,18 @@ input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); fle
       return d || (a.date || '9999').localeCompare(b.date || '9999');
     })[0];
   }
-  async function searchMB(title, artist) {
-    var q = 'recording:"' + luc(title) + '"' + (artist ? ' AND artist:"' + luc(artist) + '"' : '');
+  async function searchMB(title, artist, album, year) {
+    var base = 'recording:"' + luc(title) + '"' + (artist ? ' AND artist:"' + luc(artist) + '"' : '');
+    var q = base + (album ? ' AND release:"' + luc(album) + '"' : '');
     var d = await mbFetch('https://musicbrainz.org/ws/2/recording?query=' + encodeURIComponent(q) + '&fmt=json&limit=8');
-    return (d.recordings || []).map(function (r) {
-      var rel = pickRelease(r);
+    var recs = d.recordings || [];
+    if (!recs.length && album) {
+      // The album name we have on file may not match MusicBrainz's title for it (or may be missing/wrong) — retry without it.
+      d = await mbFetch('https://musicbrainz.org/ws/2/recording?query=' + encodeURIComponent(base) + '&fmt=json&limit=8');
+      recs = d.recordings || [];
+    }
+    return recs.map(function (r) {
+      var rel = pickRelease(r, album, year);
       var credit = (r['artist-credit'] || []).map(function (a) { return (a.name || (a.artist && a.artist.name) || '') + (a.joinphrase || ''); }).join('');
       var trk = rel && rel.media && rel.media[0] && rel.media[0].track && rel.media[0].track[0] ? rel.media[0].track[0].number : '';
       var rgid = rel && rel['release-group'] && rel['release-group'].id;
@@ -864,8 +883,9 @@ input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); fle
       };
     });
   }
-  async function searchItunes(title, artist) {
-    var r = await xfetch('https://itunes.apple.com/search?entity=song&limit=6&term=' + encodeURIComponent((title + ' ' + artist).trim()));
+  async function searchItunes(title, artist, album) {
+    var term = [title, artist, album].filter(Boolean).join(' ');
+    var r = await xfetch('https://itunes.apple.com/search?entity=song&limit=6&term=' + encodeURIComponent(term));
     if (!r.ok) throw new Error('iTunes answered with an error (' + r.status + ').');
     var d = await r.json();
     return (d.results || []).map(function (x) {
@@ -877,14 +897,25 @@ input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); fle
       };
     });
   }
-  function confident(c, title, artist) {
+  function confident(c, title, artist, album, year) {
     var tk = keyOf(title), ck = keyOf(c.title || '');
     if (!ck || !tk || (ck !== tk && ck.indexOf(tk) !== 0 && tk.indexOf(ck) !== 0)) return false;
     if (artist) {
       var ak = keyOf(artist), cak = keyOf(c.artist || '');
       if (!cak || (cak.indexOf(ak) === -1 && ak.indexOf(cak) === -1)) return false;
     }
-    return c.source === 'MusicBrainz' ? c.score >= 90 : !!artist;
+    // If we already know the album, a candidate that flatly contradicts it (different, non-overlapping album name) is a red flag.
+    if (album && c.album) {
+      var bk = keyOf(album), cbk = keyOf(c.album);
+      if (bk && cbk && bk !== cbk && bk.indexOf(cbk) === -1 && cbk.indexOf(bk) === -1) return false;
+    }
+    if (c.source === 'MusicBrainz') {
+      var need = 90;
+      if (album && c.album) need -= 5;
+      if (year && c.year && String(year).slice(0, 4) === c.year) need -= 3;
+      return c.score >= need;
+    }
+    return !!artist;
   }
   async function fetchCover(c) {
     for (var i = 0; i < (c.art || []).length; i++) {
@@ -912,14 +943,16 @@ input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); fle
   async function searchOne(g, sec) {
     var q = qState[g.key] = qState[g.key] || {};
     var ti = sec.querySelector('[data-q=title]'), ar = sec.querySelector('[data-q=artist]');
+    var al = sec.querySelector('[data-q=album]'), yr = sec.querySelector('[data-q=year]');
     q.title = ti.value.trim(); q.artist = ar.value.trim();
+    q.album = al ? al.value.trim() : ''; q.year = yr ? yr.value.trim() : '';
     if (!q.title) return;
     cands[g.key] = { loading: true };
     render();
     try {
       var out = [], errs = [];
-      try { out = out.concat(await searchMB(q.title, q.artist)); } catch (e) { errs.push(e); }
-      try { out = out.concat(await searchItunes(q.title, q.artist)); } catch (e) { errs.push(e); }
+      try { out = out.concat(await searchMB(q.title, q.artist, q.album, q.year)); } catch (e) { errs.push(e); }
+      try { out = out.concat(await searchItunes(q.title, q.artist, q.album)); } catch (e) { errs.push(e); }
       if (!out.length && errs.length) throw errs[0];
       cands[g.key] = { list: out, q: q };
     } catch (e) {
@@ -946,19 +979,20 @@ input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--volt); fle
       if (stopLookup) break;
       var g = targets[i], m = effMeta(g), mode = $('mode').value;
       var title = titleOf(g).trim(), artist = m.artist || guessArtist(g.items[0].stem, mode);
+      var album = m.album || '', year = m.year || '';
       statusEl.textContent = 'Looking up ' + (i + 1) + ' of ' + targets.length + ': ' + title;
       try {
-        var list = await searchMB(title, artist);
-        if (!list.length && artist) list = await searchMB(title, '');
-        var best = list.filter(function (c) { return confident(c, title, artist); })[0];
+        var list = await searchMB(title, artist, album, year);
+        if (!list.length && artist) list = await searchMB(title, '', album, year);
+        var best = list.filter(function (c) { return confident(c, title, artist, album, year); })[0];
         if (!best) {
           try {
-            var more = await searchItunes(title, artist);
+            var more = await searchItunes(title, artist, album);
             list = list.concat(more);
-            best = more.filter(function (c) { return confident(c, title, artist); })[0];
+            best = more.filter(function (c) { return confident(c, title, artist, album, year); })[0];
           } catch (e2) { if (isNetErr(e2) && !list.length) throw e2; }
         }
-        cands[g.key] = { list: list, q: { title: title, artist: artist } };
+        cands[g.key] = { list: list, q: { title: title, artist: artist, album: album, year: year } };
         if (best) { if (!(await applyCand(g, best, keep))) noArt++; ok++; } else none++;
       } catch (e) {
         if (isNetErr(e)) { blocked = true; break; }
