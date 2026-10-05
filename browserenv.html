@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>repo browser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--navy-950:#050912;--navy-900:#0b1226;--navy-850:#0f1830;--navy-800:#152040;--line:#26355c;--line-soft:#1a2544;--text:#e9edf9;--text-dim:#8b96b8;--text-faint:#586088;--volt:#cdff3f;--mint:#7bd99a;--err:#ff7a7a}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--navy-950);color:var(--text);font-family:'JetBrains Mono',monospace;min-height:100vh;overflow-x:hidden}
+body{display:flex;align-items:center;justify-content:center;padding:6vh 20px}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}}
+.bg-grid{position:fixed;inset:-10%;background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);background-size:42px 42px;opacity:.35;-webkit-mask-image:radial-gradient(circle at 50% 35%,black 0%,transparent 68%);mask-image:radial-gradient(circle at 50% 35%,black 0%,transparent 68%);pointer-events:none;transition:transform .4s ease-out;z-index:0}
+.bg-glow{position:fixed;top:-20%;left:50%;width:900px;height:900px;transform:translateX(-50%);background:radial-gradient(circle,rgba(205,255,63,.08) 0%,rgba(205,255,63,0) 60%);pointer-events:none;z-index:0}
+.cursor-glow{position:fixed;top:0;left:0;width:560px;height:560px;margin-left:-280px;margin-top:-280px;background:radial-gradient(circle,rgba(205,255,63,.16) 0%,rgba(205,255,63,.05) 45%,rgba(205,255,63,0) 72%);pointer-events:none;z-index:0;opacity:0;transition:opacity .5s ease;will-change:transform}
+.cursor-glow.visible{opacity:1}
+.page{position:relative;z-index:1;width:100%;max-width:640px}
+.breadcrumb{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;font-family:'Space Grotesk',sans-serif;font-size:clamp(28px,5.4vw,42px);font-weight:600;letter-spacing:-.01em;margin:0 0 6px;opacity:0;animation:riseIn .6s cubic-bezier(.2,.8,.2,1) .05s forwards}
+.crumb{background:none;border:none;padding:0;margin:0;font:inherit;color:var(--text);cursor:pointer;position:relative;transition:color .25s ease}
+.crumb::after{content:"";position:absolute;left:0;right:0;bottom:-4px;height:2px;background:var(--volt);transform:scaleX(0);transform-origin:right;transition:transform .3s cubic-bezier(.2,.8,.2,1)}
+.crumb:hover{color:var(--volt)}.crumb:hover::after{transform:scaleX(1);transform-origin:left}
+.crumb:focus-visible{outline:2px solid var(--volt);outline-offset:4px;border-radius:2px}
+.crumb-current{color:var(--text-dim)}
+.slash{color:var(--text-faint);font-weight:400}
+.cursor{color:var(--volt);animation:blink 1.1s step-end infinite;font-weight:400}
+.subline{color:var(--text-faint);font-size:13px;margin:0 0 26px;opacity:0;animation:riseIn .6s cubic-bezier(.2,.8,.2,1) .15s forwards}
+.repo-form{display:flex;gap:8px;margin:0 0 16px;opacity:0;animation:riseIn .6s cubic-bezier(.2,.8,.2,1) .2s forwards}
+.repo-form input{flex:1;min-width:0;background:var(--navy-900);border:1px solid var(--line);border-radius:8px;color:var(--text);font:inherit;font-size:14px;padding:11px 14px;outline:none;transition:border-color .2s}
+.repo-form input:focus{border-color:var(--volt)}
+.repo-form input::placeholder{color:var(--text-faint)}
+.btn{background:var(--volt);color:var(--navy-950);border:none;border-radius:8px;font:inherit;font-size:13.5px;font-weight:600;padding:0 18px;cursor:pointer;transition:filter .2s}
+.btn:hover{filter:brightness(1.1)}
+.explorer{border:1px solid var(--line);background:linear-gradient(180deg,var(--navy-900),var(--navy-850));border-radius:10px;overflow:hidden;opacity:0;animation:riseIn .6s cubic-bezier(.2,.8,.2,1) .25s forwards}
+.explorer-label{display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--line);color:var(--text-dim);font-size:13px;letter-spacing:.02em;gap:10px}
+.explorer-label span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.explorer-label .count{color:var(--text-faint);font-size:12px;flex-shrink:0}
+.file-list{list-style:none;margin:0;padding:6px 0}
+.file-row{display:flex;align-items:center;gap:2px}
+.tree-chars{color:var(--line);padding:11px 0 11px 20px;user-select:none;font-size:14px;white-space:pre}
+.file-btn{flex:1;min-width:0;display:flex;align-items:center;gap:10px;background:none;border:none;text-align:left;padding:11px 20px 11px 6px;font-family:inherit;font-size:14.5px;color:var(--text);cursor:pointer;transition:background .18s ease,color .18s ease}
+.file-btn:hover,.file-btn:focus-visible{background:var(--navy-800);color:#fff}
+.file-btn:focus-visible{outline:2px solid var(--volt);outline-offset:-2px}
+.file-icon{flex-shrink:0;opacity:.9}
+.file-name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-name .ext{color:var(--text-faint)}
+.file-btn:hover .ext{color:var(--text-dim)}
+.go-arrow{color:var(--text-faint);opacity:0;transform:translateX(-4px);transition:opacity .18s,transform .18s;font-size:14px}
+.file-btn:hover .go-arrow{opacity:1;transform:none}
+.state-row{padding:26px 20px;color:var(--text-faint);font-size:13.5px;display:flex;align-items:center;gap:10px}
+.state-row a{color:var(--volt);text-decoration:none}.state-row a:hover{text-decoration:underline}
+.spinner{width:12px;height:12px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--volt);animation:spin .8s linear infinite;flex-shrink:0}
+.status-bar{display:flex;align-items:center;gap:8px;margin-top:18px;padding-left:2px;color:var(--text-faint);font-size:12px;opacity:0;animation:riseIn .6s cubic-bezier(.2,.8,.2,1) .35s forwards}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--text-faint);flex-shrink:0}
+.dot.live{background:var(--mint);animation:pulse 2s ease-out infinite}.dot.error{background:var(--err)}
+@keyframes riseIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes blink{0%,45%{opacity:1}50%,95%{opacity:0}100%{opacity:1}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(123,217,154,.45)}70%{box-shadow:0 0 0 6px rgba(123,217,154,0)}100%{box-shadow:0 0 0 0 rgba(123,217,154,0)}}
+.arrow-overlay{position:fixed;inset:0;z-index:50;pointer-events:none;opacity:0;background:radial-gradient(circle at 50% 50%,rgba(15,24,48,.94),rgba(5,9,18,.98));transition:opacity .28s ease}
+.arrow-overlay.active{opacity:1;pointer-events:all}
+.arrow-track{position:absolute;top:50%;left:0;width:100%;transform:translateY(-50%);display:flex;align-items:center;justify-content:center}
+.caption{position:absolute;top:calc(50% + 56px);left:50%;transform:translateX(-50%);color:var(--text-faint);font-size:13px;letter-spacing:.04em;opacity:0;max-width:90vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.arrow-overlay.active .caption{animation:fadeHold .9s ease forwards}
+@keyframes fadeHold{0%{opacity:0}25%{opacity:1}80%{opacity:1}100%{opacity:0}}
+.chevrons{display:flex;gap:6px}.chevrons svg{display:block}
+.arrow-overlay.active.forward .chevrons{animation:fwd .85s cubic-bezier(.5,0,.3,1) forwards}
+.arrow-overlay.active.backward .chevrons{animation:bwd .85s cubic-bezier(.5,0,.3,1) forwards}
+@keyframes fwd{0%{transform:translateX(-70vw);opacity:0}18%{opacity:1}100%{transform:translateX(70vw);opacity:.15}}
+@keyframes bwd{0%{transform:translateX(70vw) scaleX(-1);opacity:0}18%{opacity:1}100%{transform:translateX(-70vw) scaleX(-1);opacity:.15}}
+.viewer{position:fixed;inset:0;z-index:40;background:var(--navy-950);display:none;flex-direction:column}
+.viewer.open{display:flex}
+.vbar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--navy-900);font-size:12.5px;color:var(--text-dim)}
+.vbar .path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vbtn{background:var(--navy-800);color:var(--text);border:1px solid var(--line);border-radius:6px;font:inherit;font-size:12.5px;padding:6px 12px;cursor:pointer;text-decoration:none;white-space:nowrap}
+.vbtn:hover{border-color:var(--volt);color:var(--volt)}
+.vframe{flex:1;border:0;width:100%;background:#fff}
+@media (max-width:480px){.breadcrumb{font-size:26px}.tree-chars{padding-left:14px;font-size:12px}.file-btn{padding-right:14px;font-size:13.5px}}
+</style>
+</head>
+<body>
+<div class="bg-grid" id="bgGrid"></div><div class="bg-glow"></div><div class="cursor-glow" id="cursorGlow"></div>
+
+<div class="page">
+  <div class="breadcrumb" id="crumbs"></div>
+  <p class="subline">browse any public github repo — pages run with their css, js &amp; assets, like a local checkout</p>
+  <div class="repo-form">
+    <input id="repoInput" placeholder="owner/repo  (or paste a github url)" spellcheck="false" autocomplete="off">
+    <button class="btn" id="goBtn">load</button>
+  </div>
+  <div class="explorer">
+    <div class="explorer-label"><span id="dirLabel">~/</span><span class="count" id="fileCount"></span></div>
+    <ul class="file-list" id="fileList" aria-live="polite"></ul>
+  </div>
+  <div class="status-bar"><span class="dot" id="statusDot"></span><span id="statusText">idle</span></div>
+</div>
+
+<div class="viewer" id="viewer">
+  <div class="vbar">
+    <button class="vbtn" id="vBack">← back</button>
+    <span class="path" id="vPath"></span>
+    <button class="vbtn" id="vReload">reload</button>
+    <a class="vbtn" id="vGh" target="_blank" rel="noopener">github ↗</a>
+  </div>
+  <iframe class="vframe" id="vFrame" sandbox="allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock" title="preview"></iframe>
+</div>
+
+<div class="arrow-overlay" id="arrowOverlay" aria-hidden="true">
+  <div class="arrow-track"><div class="chevrons" id="chevrons">
+    <svg width="46" height="46" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="#cdff3f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <svg width="46" height="46" viewBox="0 0 24 24" fill="none" style="opacity:.6"><path d="M9 6l6 6-6 6" stroke="#cdff3f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    <svg width="46" height="46" viewBox="0 0 24 24" fill="none" style="opacity:.3"><path d="M9 6l6 6-6 6" stroke="#cdff3f" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </div></div>
+  <div class="caption" id="overlayCaption"></div>
+</div>
+
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const ACCENTS=['#cdff3f','#5fe0e8','#ff8a7a','#7bd99a'];
+const S={o:'',r:'',b:'',dir:'',page:''};
+const branchCache={};
+const bgGrid=$('bgGrid'),glow=$('cursorGlow'),overlay=$('arrowOverlay'),chev=$('chevrons');
+
+/* cursor glow + grid parallax */
+let mx=innerWidth/2,my=innerHeight/2,gx=mx,gy=my;
+addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;glow.classList.add('visible');
+  bgGrid.style.transform=`translate(${-(mx/innerWidth-.5)*18}px,${-(my/innerHeight-.5)*18}px)`});
+addEventListener('mouseleave',()=>glow.classList.remove('visible'));
+(function loop(){gx+=(mx-gx)*.12;gy+=(my-gy)*.12;glow.style.transform=`translate3d(${gx}px,${gy}px,0)`;requestAnimationFrame(loop)})();
+
+function travel(dir,label,fn){
+  overlay.classList.remove('forward','backward','active');void overlay.offsetWidth;
+  $('overlayCaption').textContent=label||'';overlay.classList.add('active',dir);
+  let done=false;const go=()=>{if(done)return;done=true;fn();overlay.classList.remove('active','forward','backward')};
+  chev.addEventListener('animationend',go,{once:true});setTimeout(go,1100);
+}
+function status(state,t){$('statusDot').className='dot'+(state==='live'?' live':state==='error'?' error':'');$('statusText').textContent=t}
+const svg=(c,folder)=>`<svg class="file-icon" width="15" height="15" viewBox="0 0 24 24" fill="none">${folder?`<path d="M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" stroke="${c}" stroke-width="1.6"/>`:`<path d="M6 2h9l5 5v15a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z" stroke="${c}" stroke-width="1.6"/><path d="M15 2v5h5" stroke="${c}" stroke-width="1.6"/>`}</svg>`;
+
+/* ---------- routing (hash: #owner/repo/path) ---------- */
+function parseInput(v){
+  v=v.trim().replace(/^https?:\/\/github\.com\//,'').replace(/\.git$/,'').replace(/\/+$/,'');
+  const m=v.match(/^([\w.-]+)\/([\w.-]+)(?:\/(?:tree|blob)\/[^/]+)?(?:\/(.*))?$/);
+  return m?{o:m[1],r:m[2],p:m[3]||''}:null;
+}
+function nav(o,r,p){location.hash='#'+[o,r,p].filter(Boolean).join('/')}
+async function route(){
+  const h=decodeURIComponent(location.hash.slice(1));
+  const t=parseInput(h);
+  if(!t){S.o=S.r='';renderCrumbs();$('viewer').classList.remove('open');$('fileList').innerHTML='<li class="state-row">enter a repo above to start</li>';$('fileCount').textContent='';$('dirLabel').textContent='~/';status('', 'idle');return}
+  $('repoInput').value=t.o+'/'+t.r;
+  const isHtml=/\.html?$/i.test(t.p);
+  const dir=isHtml?t.p.split('/').slice(0,-1).join('/'):t.p;
+  S.o=t.o;S.r=t.r;
+  if(S.dir!==dir||!$('fileList').children.length||$('fileList').querySelector('.state-row')) await listDir(dir);
+  if(isHtml) openPage(t.p); else $('viewer').classList.remove('open');
+}
+addEventListener('hashchange',route);
+
+/* ---------- github ---------- */
+async function gh(url){
+  const res=await fetch(url,{headers:{Accept:'application/vnd.github+json'}});
+  if(res.status===403||res.status===429) throw new Error('github api rate limit hit — try again in a bit');
+  if(res.status===404) throw new Error('repo or path not found (is it public?)');
+  if(!res.ok) throw new Error('github returned '+res.status);
+  return res.json();
+}
+async function branch(){
+  const k=S.o+'/'+S.r;
+  if(!branchCache[k]) branchCache[k]=(await gh(`https://api.github.com/repos/${S.o}/${S.r}`)).default_branch;
+  return S.b=branchCache[k];
+}
+function renderCrumbs(){
+  const c=$('crumbs');c.innerHTML='';
+  const add=(txt,fn,cur)=>{
+    if(c.children.length){const s=document.createElement('span');s.className='slash';s.textContent='/';c.appendChild(s)}
+    const e=document.createElement(cur?'span':'button');e.className=cur?'crumb-current':'crumb';e.textContent=txt;
+    if(!cur)e.onclick=fn;c.appendChild(e);
+  };
+  if(!S.o){add('repo',null,true);add('browser',null,true);}
+  else{
+    const parts=S.dir?S.dir.split('/'):[];
+    add(S.o,()=>travel('backward','github.com/'+S.o,()=>location.href='https://github.com/'+S.o),false);
+    add(S.r,()=>nav(S.o,S.r,''),!parts.length);
+    parts.forEach((p,i)=>add(p,()=>nav(S.o,S.r,parts.slice(0,i+1).join('/')),i===parts.length-1));
+  }
+  const cu=document.createElement('span');cu.className='cursor';cu.textContent='▌';c.appendChild(cu);
+}
+async function listDir(dir){
+  S.dir=dir;renderCrumbs();
+  $('dirLabel').textContent=`~/${S.r}${dir?'/'+dir:''}`;$('fileCount').textContent='';
+  $('fileList').innerHTML='<li class="state-row"><span class="spinner"></span> reading directory…</li>';
+  status('', `connecting to github…`);
+  try{
+    const b=await branch();
+    const data=await gh(`https://api.github.com/repos/${S.o}/${S.r}/contents/${encodeURI(dir)}?ref=${encodeURIComponent(b)}`);
+    if(!Array.isArray(data)) throw new Error('not a directory');
+    const items=data.filter(f=>f.type==='dir'||/\.html?$/i.test(f.name))
+      .sort((a,b)=>(a.type==='dir'?0:1)-(b.type==='dir'?0:1)||a.name.localeCompare(b.name));
+    const list=$('fileList');list.innerHTML='';
+    if(!items.length) list.innerHTML='<li class="state-row">no folders or .html files here</li>';
+    const nd=items.filter(i=>i.type==='dir').length,nf=items.length-nd;
+    $('fileCount').textContent=`${nd} dir${nd===1?'':'s'} · ${nf} file${nf===1?'':'s'}`;
+    items.forEach((f,i)=>{
+      const isDir=f.type==='dir',color=ACCENTS[i%4],dot=f.name.lastIndexOf('.');
+      const base=isDir||dot<0?f.name+(isDir?'/':''):f.name.slice(0,dot),ext=isDir||dot<0?'':f.name.slice(dot);
+      const li=document.createElement('li');li.className='file-row';li.style.opacity='0';
+      li.style.animation=`riseIn .4s cubic-bezier(.2,.8,.2,1) ${.1+i*.04}s forwards`;
+      const tc=document.createElement('span');tc.className='tree-chars';tc.textContent=i===items.length-1?'└──':'├──';
+      const btn=document.createElement('button');btn.className='file-btn';
+      btn.innerHTML=svg(color,isDir)+'<span class="file-name"></span><span class="go-arrow">open →</span>';
+      const nm=btn.querySelector('.file-name');nm.append(base);
+      if(ext){const x=document.createElement('span');x.className='ext';x.textContent=ext;nm.appendChild(x)}
+      btn.onclick=()=>isDir?nav(S.o,S.r,f.path):travel('forward',f.path,()=>nav(S.o,S.r,f.path));
+      li.append(tc,btn);list.appendChild(li);
+    });
+    status('live',`watching ${S.o}/${S.r} @ ${b}`);
+  }catch(err){
+    $('fileList').innerHTML='';const li=document.createElement('li');li.className='state-row';
+    li.innerHTML=`<span></span> — <a href="https://github.com/${S.o}/${S.r}" target="_blank" rel="noopener">view on github</a>`;
+    li.firstChild.textContent=err.message;$('fileList').appendChild(li);
+    status('error','connection failed');
+  }
+}
+
+/* ---------- the "virtual checkout": bundle a page + its linked files ---------- */
+const RAW=()=>`https://raw.githubusercontent.com/${S.o}/${S.r}/${S.b}/`;
+const txt=async u=>{const r=await fetch(u);if(!r.ok)throw new Error(r.status);return r.text()};
+
+async function bundle(path){
+  const root=RAW(),pageUrl=root+path.split('/').map(encodeURIComponent).join('/');
+  const fix=v=>v&&v[0]==='/'&&v[1]!=='/'?root+v.slice(1):v;
+  const doc=new DOMParser().parseFromString(await txt(pageUrl),'text/html');
+  doc.querySelectorAll('base').forEach(b=>b.remove());
+  doc.querySelectorAll('[src],link[href]').forEach(el=>{const a=el.hasAttribute('src')?'src':'href';el.setAttribute(a,fix(el.getAttribute(a)))});
+  const inRepo=(href,from)=>{try{const u=new URL(href,from).href;return u.startsWith(root)?u:null}catch(e){return null}};
+  const cssFix=(css,from)=>css.replace(/url\(\s*(['"]?)(?!data:|https?:|\/\/|#)([^)'"]+)\1\s*\)/g,(m,q,u)=>{
+    try{return `url("${new URL(fix(u.trim()),from).href}")`}catch(e){return m}});
+  const jobs=[];let n=0;
+  /* stylesheets -> inline <style>, with url() rewritten to raw github urls */
+  doc.querySelectorAll('link[rel~="stylesheet"][href]').forEach(l=>{
+    const u=inRepo(l.getAttribute('href'),pageUrl);if(!u)return;
+    jobs.push(txt(u).then(async css=>{
+      /* resolve one level of @import */
+      const imps=[...css.matchAll(/@import\s+(?:url\()?['"]([^'"]+)['"]\)?[^;]*;/g)];
+      for(const m of imps){const iu=inRepo(m[1],u);if(iu){try{css=css.replace(m[0],cssFix(await txt(iu),iu))}catch(e){}}}
+      const s=doc.createElement('style');s.textContent=cssFix(css,u);l.replaceWith(s);n++;
+    }).catch(()=>{}));
+  });
+  /* scripts -> inline (raw serves text/plain, so <script src> would be blocked) */
+  doc.querySelectorAll('script[src]').forEach(sc=>{
+    const u=inRepo(sc.getAttribute('src'),pageUrl);if(!u)return;
+    jobs.push(txt(u).then(js=>{sc.removeAttribute('src');sc.textContent=js.replace(/<\/script/gi,'<\\/script');n++}).catch(()=>{}));
+  });
+  await Promise.all(jobs);
+  /* shim: base url for images/media, link interception, leading-slash fetch */
+  const shim=doc.createElement('script');
+  shim.textContent=`(function(){var R=${JSON.stringify(root)};var f=window.fetch;
+window.fetch=function(u,o){if(typeof u==='string'&&u[0]==='/'&&u[1]!=='/')u=R+u.slice(1);return f.call(this,u,o)};
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[href]');if(!a)return;
+var h=a.getAttribute('href');if(!h||/^(mailto:|tel:|javascript:)/.test(h))return;
+if(h[0]==='#'){e.preventDefault();var t=document.getElementById(h.slice(1));if(t)t.scrollIntoView();return}
+e.preventDefault();parent.postMessage({gh:1,url:(h[0]==='/'&&h[1]!=='/')?R+h.slice(1):a.href},'*')},true)})();`.replace(/<\/script/g,'<\\/script');
+  doc.head.prepend(shim);
+  const base=doc.createElement('base');base.href=pageUrl;doc.head.prepend(base);
+  return {html:'<!DOCTYPE html>'+doc.documentElement.outerHTML,n};
+}
+
+async function openPage(path){
+  S.page=path;
+  const v=$('viewer');v.classList.add('open');
+  $('vPath').textContent=`${S.o}/${S.r}/${path} · bundling…`;
+  $('vGh').href=`https://github.com/${S.o}/${S.r}/blob/${S.b}/${path}`;
+  try{
+    if(!S.b) await branch();
+    const {html,n}=await bundle(path);
+    $('vFrame').srcdoc=html;
+    $('vPath').textContent=`${S.o}/${S.r}/${path} · ${n} linked file${n===1?'':'s'} loaded`;
+  }catch(e){
+    $('vFrame').srcdoc=`<body style="font-family:monospace;padding:30px;background:#0b1226;color:#ff7a7a">couldn't load ${path.replace(/</g,'&lt;')}</body>`;
+    $('vPath').textContent=`${S.o}/${S.r}/${path} · failed`;
+  }
+}
+$('vBack').onclick=()=>travel('backward',`~/${S.r}`,()=>nav(S.o,S.r,S.dir));
+$('vReload').onclick=()=>openPage(S.page);
+addEventListener('message',e=>{
+  if(e.source!==$('vFrame').contentWindow||!e.data||!e.data.gh)return;
+  let u;try{u=new URL(e.data.url)}catch(_){return}
+  const root=RAW();
+  if(u.href.startsWith(root)){
+    let p=decodeURIComponent(u.pathname.split('/').slice(4).join('/'));
+    if(!p||p.endsWith('/'))p+='index.html';
+    if(/\.html?$/i.test(p)) return nav(S.o,S.r,p);
+  }
+  window.open(u.href,'_blank','noopener');
+});
+
+/* ---------- input ---------- */
+function submit(){const t=parseInput($('repoInput').value);if(!t){status('error','try owner/repo');return}nav(t.o,t.r,t.p);if(location.hash==='#'+[t.o,t.r,t.p].filter(Boolean).join('/'))route()}
+$('goBtn').onclick=submit;
+$('repoInput').addEventListener('keydown',e=>{if(e.key==='Enter')submit()});
+addEventListener('keydown',e=>{if(e.key==='Escape'&&$('viewer').classList.contains('open'))$('vBack').click()});
+route();
+})();
+</script>
+</body>
+</html>
